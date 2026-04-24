@@ -1,0 +1,17 @@
+_opam
+_build
+*.install
+
+# vim swap files
+*.swp
+*.swo
+
+# emacs lock files
+.#*
+
+# vscode settings
+.vscode
+
+.deps-installed
+/gk-tools
+/bin/main.exe

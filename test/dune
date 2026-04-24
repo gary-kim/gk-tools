@@ -1,0 +1,9 @@
+(library
+ (name test_gk_tools)
+ (libraries gk_tools core core_unix async file_path filesystem.async)
+ (inline_tests)
+ (preprocess
+  (pps ppx_jane)))
+
+(cram
+ (deps %{bin:gk-tools}))

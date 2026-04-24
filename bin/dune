@@ -1,0 +1,13 @@
+(executable
+ (public_name gk-tools)
+ (name main)
+ (promote (until-clean))
+ (modes
+  (native exe))
+ (libraries
+  gk_tools
+  core
+  core_unix.command_unix
+  dune-build-info)
+ (preprocess
+  (pps ppx_jane)))

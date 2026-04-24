@@ -1,0 +1,17 @@
+(library
+ (name gk_tools)
+ (libraries
+  angstrom
+  core
+  core_unix
+  async
+  cohttp
+  cohttp-async
+  uri
+  sexp_macro
+  xdg
+  patdiff
+  patdiff.kernel)
+ (inline_tests)
+ (preprocess
+  (pps ppx_jane)))
