@@ -1,7 +1,6 @@
 (library
  (name gk_tools)
  (libraries
-  angstrom
   core
   core_unix
   async

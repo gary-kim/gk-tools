@@ -19,7 +19,6 @@
   (ocaml-variants
    (= 5.2.0+ox))
   dune
-  angstrom
   (core
    (>= 0.17.0))
   (core_unix

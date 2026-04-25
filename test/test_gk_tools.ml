@@ -1,6 +1,9 @@
 open! Core
 open! Async
-module Expect_test_config = Async.Expect_test_config
+
+(* Silence Async log output so non-deterministic timestamps don't leak into
+   expect tests that exercise [%log] code paths. *)
+let () = Log.Global.set_output []
 
 let%expect_test "parse - simple UID extraction" =
   let data =
@@ -97,6 +100,153 @@ let%expect_test "parse - missing VERSION and PRODID" =
       (Gk_tools.Ics.parse data |> Or_error.map ~f:(Fn.const ()) : unit Or_error.t)];
   [%expect
     {| (Error ("VCALENDAR missing required properties" (missing (PRODID VERSION)))) |}];
+  return ()
+;;
+
+(* TODO: the tests below this point were added to verify the line-folding /
+   parser rewrite preserves behavior. Once the rewrite settles, prune the
+   redundant ones — we don't need every edge case covered forever. *)
+
+let%expect_test "parse - chain of folded continuations" =
+  let data =
+    String.concat
+      ~sep:"\r\n"
+      [ "BEGIN:VCALENDAR"
+      ; "VERSION:2.0"
+      ; "PRODID:-//Test//Test//EN"
+      ; "BEGIN:VEVENT"
+      ; "UI"
+      ; " D"
+      ; " :chain"
+      ; " -fold"
+      ; " -ed"
+      ; "END:VEVENT"
+      ; "END:VCALENDAR"
+      ; ""
+      ]
+  in
+  let ics = Gk_tools.Ics.parse data |> Or_error.ok_exn in
+  print_endline (Gk_tools.Ics.uid ics);
+  [%expect {| chain-fold-ed |}];
+  return ()
+;;
+
+let%expect_test "parse - tab continuation" =
+  let data =
+    String.concat
+      ~sep:"\r\n"
+      [ "BEGIN:VCALENDAR"
+      ; "VERSION:2.0"
+      ; "PRODID:-//Test//Test//EN"
+      ; "BEGIN:VEVENT"
+      ; "UID:tab"
+      ; "\t-folded"
+      ; "END:VEVENT"
+      ; "END:VCALENDAR"
+      ; ""
+      ]
+  in
+  let ics = Gk_tools.Ics.parse data |> Or_error.ok_exn in
+  print_endline (Gk_tools.Ics.uid ics);
+  [%expect {| tab-folded |}];
+  return ()
+;;
+
+let%expect_test "parse - LF only line endings" =
+  let data =
+    {|BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//Test//Test//EN
+BEGIN:VEVENT
+UID:lf-only
+END:VEVENT
+END:VCALENDAR
+|}
+  in
+  let ics = Gk_tools.Ics.parse data |> Or_error.ok_exn in
+  print_endline (Gk_tools.Ics.uid ics);
+  [%expect {| lf-only |}];
+  return ()
+;;
+
+let%expect_test "parse - input without final newline" =
+  let data =
+    String.concat
+      ~sep:"\r\n"
+      [ "BEGIN:VCALENDAR"
+      ; "VERSION:2.0"
+      ; "PRODID:-//Test//Test//EN"
+      ; "BEGIN:VEVENT"
+      ; "UID:no-trailing-newline"
+      ; "END:VEVENT"
+      ; "END:VCALENDAR"
+      ]
+  in
+  let ics = Gk_tools.Ics.parse data |> Or_error.ok_exn in
+  print_endline (Gk_tools.Ics.uid ics);
+  [%expect {| no-trailing-newline |}];
+  return ()
+;;
+
+let%expect_test "parse - empty input" =
+  print_s
+    [%sexp
+      (Gk_tools.Ics.parse "" |> Or_error.map ~f:(Fn.const ()) : unit Or_error.t)];
+  [%expect {| (Error "iCalendar data too short") |}];
+  return ()
+;;
+
+let%expect_test "parse - bare VCALENDAR envelope" =
+  let data = "BEGIN:VCALENDAR\r\nEND:VCALENDAR\r\n" in
+  print_s
+    [%sexp
+      (Gk_tools.Ics.parse data |> Or_error.map ~f:(Fn.const ()) : unit Or_error.t)];
+  [%expect {| (Error ("VCALENDAR missing required properties" (missing (PRODID VERSION)))) |}];
+  return ()
+;;
+
+let%expect_test "parse - mismatched BEGIN/END component names" =
+  let data =
+    String.concat
+      ~sep:"\r\n"
+      [ "BEGIN:VCALENDAR"
+      ; "VERSION:2.0"
+      ; "PRODID:-//Test//Test//EN"
+      ; "BEGIN:VEVENT"
+      ; "UID:mismatch"
+      ; "END:VTODO"
+      ; "END:VCALENDAR"
+      ; ""
+      ]
+  in
+  print_s
+    [%sexp
+      (Gk_tools.Ics.parse data |> Or_error.map ~f:(Fn.const ()) : unit Or_error.t)];
+  [%expect {| (Error ("mismatched BEGIN/END component" (opened VEVENT) (closed VTODO))) |}];
+  return ()
+;;
+
+let%expect_test "parse - UID inside nested VALARM is ignored" =
+  let data =
+    String.concat
+      ~sep:"\r\n"
+      [ "BEGIN:VCALENDAR"
+      ; "VERSION:2.0"
+      ; "PRODID:-//Test//Test//EN"
+      ; "BEGIN:VEVENT"
+      ; "UID:event-uid"
+      ; "BEGIN:VALARM"
+      ; "UID:alarm-uid"
+      ; "ACTION:DISPLAY"
+      ; "END:VALARM"
+      ; "END:VEVENT"
+      ; "END:VCALENDAR"
+      ; ""
+      ]
+  in
+  let ics = Gk_tools.Ics.parse data |> Or_error.ok_exn in
+  print_endline (Gk_tools.Ics.uid ics);
+  [%expect {| event-uid |}];
   return ()
 ;;
 
@@ -233,5 +383,121 @@ caldav-source-cred-cmd = rbw get caldav
           (Gk_tools.Ini_file.find_key ini ~key:"caldav-source"
             : (string * string) option)];
       [%expect {| ((account2 https://cal.work.com/dav)) |}];
+      return ())
+;;
+
+(* TODO: as with the ICS tests above, the INI tests below were added to verify
+   the rewrite preserves behavior. Prune the redundant ones once we're confident
+   in the new implementation. *)
+
+let%expect_test "ini_file - empty file" =
+  with_temp_ini ~content:"" ~f:(fun path ->
+    let%bind ini = Gk_tools.Ini_file.load path >>| Or_error.ok_exn in
+    print_s
+      [%sexp (Gk_tools.Ini_file.find_key ini ~key:"any" : (string * string) option)];
+    [%expect {| () |}];
+    return ())
+;;
+
+let%expect_test "ini_file - comments only" =
+  with_temp_ini
+    ~content:{|# hash comment
+; semicolon comment
+# another
+|}
+    ~f:(fun path ->
+      let%bind ini = Gk_tools.Ini_file.load path >>| Or_error.ok_exn in
+      print_s
+        [%sexp (Gk_tools.Ini_file.find_key ini ~key:"any" : (string * string) option)];
+      [%expect {| () |}];
+      return ())
+;;
+
+let%expect_test "ini_file - bindings before any section" =
+  with_temp_ini
+    ~content:
+      {|key1 = value1
+key2 = value2
+
+[real_section]
+key3 = value3
+|}
+    ~f:(fun path ->
+      let%bind ini = Gk_tools.Ini_file.load path >>| Or_error.ok_exn in
+      print_s
+        [%message
+          (Gk_tools.Ini_file.get ini ~section:"" ~key:"key1" : string option)
+            (Gk_tools.Ini_file.find_key ini ~key:"key2"
+              : (string * string) option)
+            (Gk_tools.Ini_file.get ini ~section:"real_section" ~key:"key3"
+              : string option)];
+      [%expect {|
+        (("Gk_tools.Ini_file.get ini ~section:\"\" ~key:\"key1\"" (value1))
+         ("Gk_tools.Ini_file.find_key ini ~key:\"key2\"" (("" value2)))
+         ("Gk_tools.Ini_file.get ini ~section:\"real_section\" ~key:\"key3\""
+          (value3)))
+        |}];
+      return ())
+;;
+
+let%expect_test "ini_file - duplicate keys overwrite" =
+  with_temp_ini
+    ~content:{|[s]
+key = first
+key = second
+|}
+    ~f:(fun path ->
+      let%bind ini = Gk_tools.Ini_file.load path >>| Or_error.ok_exn in
+      print_s
+        [%sexp
+          (Gk_tools.Ini_file.get ini ~section:"s" ~key:"key" : string option)];
+      [%expect {| (second) |}];
+      return ())
+;;
+
+let%expect_test "ini_file - lines without = are skipped" =
+  with_temp_ini
+    ~content:{|[s]
+key = value
+malformed line
+another = good
+|}
+    ~f:(fun path ->
+      let%bind ini = Gk_tools.Ini_file.load path >>| Or_error.ok_exn in
+      print_s
+        [%message
+          (Gk_tools.Ini_file.get ini ~section:"s" ~key:"key" : string option)
+            (Gk_tools.Ini_file.get ini ~section:"s" ~key:"another" : string option)];
+      [%expect {|
+        (("Gk_tools.Ini_file.get ini ~section:\"s\" ~key:\"key\"" (value))
+         ("Gk_tools.Ini_file.get ini ~section:\"s\" ~key:\"another\"" (good)))
+        |}];
+      return ())
+;;
+
+let%expect_test "ini_file - = sign in value preserved" =
+  with_temp_ini
+    ~content:{|[s]
+url = https://user:pass@host/path?q=v&r=s
+|}
+    ~f:(fun path ->
+      let%bind ini = Gk_tools.Ini_file.load path >>| Or_error.ok_exn in
+      print_s
+        [%sexp
+          (Gk_tools.Ini_file.get ini ~section:"s" ~key:"url" : string option)];
+      [%expect {| (https://user:pass@host/path?q=v&r=s) |}];
+      return ())
+;;
+
+let%expect_test "ini_file - whitespace trimming" =
+  with_temp_ini
+    ~content:
+      "  [  spaced  ]  \n   key   =   value with internal spaces   \n"
+    ~f:(fun path ->
+      let%bind ini = Gk_tools.Ini_file.load path >>| Or_error.ok_exn in
+      print_s
+        [%sexp
+          (Gk_tools.Ini_file.get ini ~section:"spaced" ~key:"key" : string option)];
+      [%expect {| ("value with internal spaces") |}];
       return ())
 ;;

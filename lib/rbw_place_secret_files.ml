@@ -33,20 +33,17 @@ let get_filepath record =
 
 let get_contents record = rbw [ "get"; "--folder"; folder; record ]
 
-let resolve_target filepath =
-  let prepend_home rest =
-    match Sys.getenv "HOME" with
-    | Some h -> Ok (if String.is_empty rest then h else h ^/ rest)
-    | None -> Or_error.error_string "HOME environment variable not set"
-  in
+let resolve_target ~home_dir filepath =
   if Filename.is_absolute filepath
-  then Ok filepath
-  else if String.equal filepath "~"
-  then prepend_home ""
+  then filepath
   else (
-    match String.chop_prefix filepath ~prefix:"~/" with
-    | Some rest -> prepend_home rest
-    | None -> prepend_home filepath)
+    let rest =
+      if String.equal filepath "~"
+      then ""
+      else
+        Option.value (String.chop_prefix filepath ~prefix:"~/") ~default:filepath
+    in
+    if String.is_empty rest then home_dir else home_dir ^/ rest)
 ;;
 
 let diff_config () =
@@ -95,14 +92,14 @@ let dry_run_record ~target ~contents ~record =
        return ())
 ;;
 
-let handle_record ~apply record =
+let handle_record ~apply ~home_dir record =
   let%bind filepath_opt = get_filepath record in
   match filepath_opt with
   | None ->
     [%log.info "record missing filepath field" (record : string)];
     return ()
   | Some filepath ->
-    let%bind target = resolve_target filepath |> Deferred.return in
+    let target = resolve_target ~home_dir filepath in
     let%bind contents = get_contents record in
     if apply
     then apply_record ~target ~contents
@@ -115,9 +112,24 @@ let command =
     ~summary:"Place secret files from Bitwarden (via rbw) at their configured locations"
     (let%map_open.Command apply =
        flag "apply" no_arg ~doc:" actually place files (default is dry-run)"
+     and home_dir =
+       flag
+         "home-dir"
+         (optional string)
+         ~doc:"DIR override $HOME for ~/ and relative-path expansion"
      and () = Log.Global.set_level_via_param () in
      fun () ->
+       let%bind home_dir =
+         match Option.first_some home_dir (Sys.getenv "HOME") with
+         | Some dir -> return dir
+         | None ->
+           Deferred.Or_error.error_string
+             "no home directory: pass -home-dir or set $HOME"
+       in
        let%bind () = sync () in
        let%bind records = list_records () in
-       Deferred.Or_error.List.iter records ~how:`Sequential ~f:(handle_record ~apply))
+       Deferred.Or_error.List.iter
+         records
+         ~how:`Sequential
+         ~f:(handle_record ~apply ~home_dir))
 ;;
