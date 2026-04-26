@@ -43,7 +43,7 @@ Pre-populate the local file with new content we want to upload.
 Upload runs the diff (record vs local) on stdout, then writes local bytes to
 the record. We confirm via the side log that the shim wrote what we expected.
 
-  $ gk-tools rbw files upload -yes upload-target 2>/dev/null
+  $ gkt rbw files upload -yes upload-target 2>/dev/null
   @|-1,1 +1,2 ============================================================
   -|old contents
   +|fresh local content
@@ -57,7 +57,7 @@ the record. We confirm via the side log that the shim wrote what we expected.
 Case-insensitive needle matching: "Upload-Target" should match.
 
   $ rm -f "$EDIT_LOG"
-  $ gk-tools rbw files upload -yes Upload-Target 2>/dev/null > /dev/null
+  $ gkt rbw files upload -yes Upload-Target 2>/dev/null > /dev/null
   $ cat "$EDIT_LOG"
   rbw-edit-result-for upload-target:
   fresh local content
@@ -65,5 +65,5 @@ Case-insensitive needle matching: "Upload-Target" should match.
 
 A non-matching needle should fail.
 
-  $ gk-tools rbw files upload -yes does-not-exist 2>/dev/null
+  $ gkt rbw files upload -yes does-not-exist 2>/dev/null
   [1]

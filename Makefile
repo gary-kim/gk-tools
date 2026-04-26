@@ -1,13 +1,13 @@
 .PHONY: all
-all: gk-tools
+all: gkt
 
-.PHONY: gk-tools
-gk-tools: .deps-installed
-	dune build gk-tools
+.PHONY: gkt
+gkt: .deps-installed
+	dune build gkt
 
-.PHONY: gk-tools_release
-gk-tools_release: .deps-installed
-	dune build --release gk-tools
+.PHONY: gkt_release
+gkt_release: .deps-installed
+	dune build --release gkt
 
 .PHONY: watch
 watch: dependencies
@@ -24,9 +24,9 @@ gk-tools.opam: dune-project
 	dune build gk-tools.opam
 
 .PHONY: test
-test: gk-tools
+test: gkt
 	dune runtest --force
 
 .PHONY: checks
-checks: gk-tools test
+checks: gkt test
 	dune build @fmt

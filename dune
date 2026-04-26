@@ -1,7 +1,7 @@
 (rule
  (alias executables)
  (mode promote)
- (target gk-tools)
+ (target gkt)
  (deps %{project_root}/bin/main.exe)
  (action
   (copy %{deps} %{target})))

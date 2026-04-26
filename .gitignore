@@ -13,5 +13,5 @@ _build
 .vscode
 
 .deps-installed
-/gk-tools
+/gkt
 /bin/main.exe

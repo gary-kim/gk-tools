@@ -51,7 +51,7 @@ Check exits non-zero when any local file differs from its Bitwarden record.
 stdout shows the diff for diff-case and the raw contents for new-case;
 the missing-filepath record causes the iteration to error out.
 
-  $ gk-tools rbw files check 2>/dev/null
+  $ gkt rbw files check 2>/dev/null
   @|-1,1 +1,1 ============================================================
   -|stale contents
   +|new version
@@ -69,7 +69,7 @@ Local files should not have been modified.
 Apply writes all preceding records with 0600 perms and then errors on the
 missing-filepath record.
 
-  $ gk-tools rbw files apply 2>/dev/null
+  $ gkt rbw files apply 2>/dev/null
   [1]
   $ cat "$HOME/match.conf"
   matching contents

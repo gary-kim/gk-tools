@@ -1,5 +1,5 @@
 (executable
- (public_name gk-tools)
+ (public_name gkt)
  (name main)
  (promote (until-clean))
  (modes
