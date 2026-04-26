@@ -3,14 +3,18 @@
  (libraries
   core
   core_unix
+  core_unix.bigstring_unix
+  core_unix.linux_ext
   async
+  async_interactive
   cohttp
   cohttp-async
+  filesystem.async
+  jsonaf
   uri
   sexp_macro
   xdg
   patdiff
   patdiff.kernel)
- (inline_tests)
  (preprocess
-  (pps ppx_jane)))
+  (pps ppx_jane ppx_jsonaf_conv)))

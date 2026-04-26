@@ -1,6 +1,6 @@
 (library
  (name test_gk_tools)
- (libraries gk_tools core core_unix async file_path filesystem.async)
+ (libraries gk_tools core core_unix async file_path filesystem.async jsonaf)
  (inline_tests)
  (preprocess
   (pps ppx_jane)))

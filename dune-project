@@ -43,5 +43,11 @@
    (>= 0.17.0))
   (filesystem
    (>= 0.17.0))
+  (jsonaf
+   (>= 0.17.0))
+  (ppx_jsonaf_conv
+   (>= 0.17.0))
+  (async_interactive
+   (>= 0.17.0))
   ocamlformat
   dune-build-info))

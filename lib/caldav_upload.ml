@@ -31,7 +31,7 @@ module Credentials = struct
       let%bind output = Process.run ~prog:"sh" ~args:[ "-c"; cmd ] () in
       let password = String.strip output in
       if String.is_empty password
-      then Deferred.Or_error.error_string "password command produced empty output"
+      then Deferred.Or_error.error_s [%message "password command produced empty output"]
       else return { t with password = Some password }
   ;;
 end
@@ -87,9 +87,7 @@ let read_aerc_config (aerc : Aerc_config.t)
           ~creds:(Some (aerc_source_credentials source)), ~cred_cmd))
 ;;
 
-let non_empty : string option -> string option =
-  Option.filter ~f:(Fn.non String.is_empty)
-;;
+let non_empty : string option -> string option = Option.filter ~f:(Fn.non String.is_empty)
 
 let resolve_credentials ~server_url ~username ~password ~sexp_config ~aerc =
   let sexp_creds, sexp_password_cmd =
@@ -103,28 +101,30 @@ let resolve_credentials ~server_url ~username ~password ~sexp_config ~aerc =
       , c.password_cmd )
     | None -> None, None
   in
-  Deferred.map (read_aerc_config aerc) ~f:(fun (~creds:aerc_creds, ~cred_cmd:aerc_cred_cmd) ->
-    let aerc_server = Option.map aerc_creds ~f:(fun c -> c.server_url) in
-    let aerc_user = Option.bind aerc_creds ~f:(fun c -> c.username) in
-    let aerc_pass = Option.bind aerc_creds ~f:(fun c -> c.password) in
-    let sexp_server = Option.map sexp_creds ~f:(fun c -> c.server_url) in
-    let sexp_user = Option.bind sexp_creds ~f:(fun c -> c.username) in
-    let sexp_pass = Option.bind sexp_creds ~f:(fun c -> c.password) in
-    let resolved_server =
-      List.find_map [ server_url; sexp_server; aerc_server ] ~f:Fn.id |> non_empty
-    in
-    let resolved_user = List.find_map [ username; sexp_user; aerc_user ] ~f:Fn.id in
-    let resolved_pass = List.find_map [ password; sexp_pass; aerc_pass ] ~f:Fn.id in
-    let password_cmd = List.find_map [ sexp_password_cmd; aerc_cred_cmd ] ~f:Fn.id in
-    match resolved_server with
-    | None -> Or_error.error_string "server URL is required"
-    | Some url ->
-      Ok
-        ( { Credentials.server_url = url
-          ; username = resolved_user
-          ; password = resolved_pass
-          }
-         , password_cmd ))
+  Deferred.map
+    (read_aerc_config aerc)
+    ~f:(fun (~creds:aerc_creds, ~cred_cmd:aerc_cred_cmd) ->
+      let aerc_server = Option.map aerc_creds ~f:(fun c -> c.server_url) in
+      let aerc_user = Option.bind aerc_creds ~f:(fun c -> c.username) in
+      let aerc_pass = Option.bind aerc_creds ~f:(fun c -> c.password) in
+      let sexp_server = Option.map sexp_creds ~f:(fun c -> c.server_url) in
+      let sexp_user = Option.bind sexp_creds ~f:(fun c -> c.username) in
+      let sexp_pass = Option.bind sexp_creds ~f:(fun c -> c.password) in
+      let resolved_server =
+        List.find_map [ server_url; sexp_server; aerc_server ] ~f:Fn.id |> non_empty
+      in
+      let resolved_user = List.find_map [ username; sexp_user; aerc_user ] ~f:Fn.id in
+      let resolved_pass = List.find_map [ password; sexp_pass; aerc_pass ] ~f:Fn.id in
+      let password_cmd = List.find_map [ sexp_password_cmd; aerc_cred_cmd ] ~f:Fn.id in
+      match resolved_server with
+      | None -> Or_error.error_s [%message "server URL is required"]
+      | Some url ->
+        Ok
+          ( { Credentials.server_url = url
+            ; username = resolved_user
+            ; password = resolved_pass
+            }
+          , password_cmd ))
 ;;
 
 let build_upload_url ~server_url ~uid =
@@ -139,43 +139,42 @@ let http_put_timeout = Time_float.Span.of_sec 30.
 let http_put ~url ~data ~(creds : Credentials.t) ~force =
   [%log.debug "CalDAV PUT" (url : string)];
   let headers =
-    let base = Cohttp.Header.init_with "Content-Type" {|text/calendar; charset="utf-8"|} in
+    let base =
+      Cohttp.Header.init_with "Content-Type" {|text/calendar; charset="utf-8"|}
+    in
     let with_auth =
       match creds.username, creds.password with
       | Some u, Some p -> Cohttp.Header.add_authorization base (`Basic (u, p))
       | Some u, None ->
         [%log.error
-          "Username provided without password; omitting Authorization header"
-            (u : string)];
+          "Username provided without password; omitting Authorization header" (u : string)];
         base
       | None, _ -> base
     in
     if force then with_auth else Cohttp.Header.add with_auth "If-None-Match" "*"
   in
-  let put_deferred =
+  let put_and_body =
     Deferred.Or_error.try_with ~extract_exn:true (fun () ->
-      Cohttp_async.Client.put
-        ~headers
-        ~chunked:false
-        ~body:(`String data)
-        (Uri.of_string url))
+      let%bind.Deferred response, body =
+        Cohttp_async.Client.put
+          ~headers
+          ~chunked:false
+          ~body:(`String data)
+          (Uri.of_string url)
+      in
+      let%bind.Deferred body_str = Cohttp_async.Body.to_string body in
+      Deferred.return (response, body_str))
   in
-  let%bind response, body =
-    match%bind.Deferred Clock.with_timeout http_put_timeout put_deferred with
+  let%bind response, body_str =
+    match%bind.Deferred Clock.with_timeout http_put_timeout put_and_body with
     | `Result r -> Deferred.return r
     | `Timeout ->
       Deferred.Or_error.error_s
         [%message
-          "CalDAV PUT timed out"
-            (url : string)
-            (http_put_timeout : Time_float.Span.t)]
+          "CalDAV PUT timed out" (url : string) (http_put_timeout : Time_float.Span.t)]
   in
   let status_code = Cohttp.Code.code_of_status (Cohttp.Response.status response) in
   [%log.debug "CalDAV PUT response" (status_code : int)];
-  let%bind body_str =
-    Deferred.Or_error.try_with ~extract_exn:true (fun () ->
-      Cohttp_async.Body.to_string body)
-  in
   if 200 <= status_code && status_code < 300
   then return ()
   else
@@ -242,13 +241,7 @@ let command =
      and file = anon (maybe ("FILE" %: string)) in
      fun () ->
        let%bind ics_data = read_ics_data file in
-       let%bind.Deferred gk_config =
-         match%map.Deferred Config.load_default () with
-         | Ok c -> c
-         | Error err ->
-           [%log.info "Failed to load gk-tools config, using defaults" (err : Error.t)];
-           Config.empty
-       in
+       let%bind gk_config = Config.load_default () in
        let%bind ics = Ics.parse ics_data |> Deferred.return in
        let uid = Ics.uid ics in
        let ics_data = Ics.cleaned ics in

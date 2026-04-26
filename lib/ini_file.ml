@@ -62,10 +62,7 @@ let parse_string contents =
   let init : Fold_state.t =
     { closed = []; current = None; entries = Map.empty (module String) }
   in
-  String.split_lines contents
-  |> List.fold ~init ~f:step
-  |> close_section
-  |> List.rev
+  String.split_lines contents |> List.fold ~init ~f:step |> close_section |> List.rev
 ;;
 
 let load path =

@@ -4,10 +4,6 @@
  (promote (until-clean))
  (modes
   (native exe))
- (libraries
-  gk_tools
-  core
-  core_unix.command_unix
-  dune-build-info)
+ (libraries gk_tools core core_unix.command_unix dune-build-info)
  (preprocess
   (pps ppx_jane)))

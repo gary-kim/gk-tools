@@ -8,9 +8,9 @@ type t =
 let uid t = t.uid
 let cleaned t = t.cleaned
 
-(* RFC 5545 §3.1: a logical content line may be split across multiple physical
-   lines by inserting a CRLF followed by a single space or tab; the receiver
-   unfolds by removing the CRLF and the leading whitespace character. *)
+(* RFC 5545 §3.1: a logical content line may be split across multiple physical lines by
+   inserting a CRLF followed by a single space or tab; the receiver unfolds by removing
+   the CRLF and the leading whitespace character. *)
 let unfold raw =
   String.split_lines raw
   |> List.fold ~init:[] ~f:(fun acc line ->
@@ -105,17 +105,20 @@ let step (state : Parse_state.t) raw : Parse_state.t Or_error.t =
        else Ok { state with open_components = rest; acc = raw :: state.acc })
   | Property name ->
     let depth = List.length state.open_components in
-    let keep = depth > 0 || Set.mem allowed_vcalendar_properties name in
+    let keep =
+      depth > 0
+      || Set.mem allowed_vcalendar_properties name
+      || String.is_prefix name ~prefix:"X-"
+    in
     let acc = if keep then raw :: state.acc else state.acc in
     let uids =
-      (* RFC 5545: UID belongs on the primary calendar object (VEVENT, VTODO,
-         VJOURNAL, VFREEBUSY) — not on nested components like VALARM. We only
-         collect at depth 1 (direct children of VCALENDAR). *)
+      (* RFC 5545: UID belongs on the primary calendar object (VEVENT, VTODO, VJOURNAL,
+         VFREEBUSY) — not on nested components like VALARM. We only collect at depth 1
+         (direct children of VCALENDAR). *)
       if String.equal name "UID" && depth = 1
-      then (
-        match uid_value raw with
-        | Some uid -> uid :: state.uids
-        | None -> state.uids)
+      then
+        Option.value_map (uid_value raw) ~default:state.uids ~f:(fun uid ->
+          uid :: state.uids)
       else state.uids
     in
     let vcalendar_properties =
@@ -143,7 +146,7 @@ let parse data =
       else if not (String.Caseless.equal (String.strip last) "END:VCALENDAR")
       then Or_error.error_s [%message "expected END:VCALENDAR" ~got:last]
       else Ok (first, inner, last)
-    | _ -> Or_error.error_string "iCalendar data too short"
+    | _ -> Or_error.error_s [%message "iCalendar data too short"]
   in
   let init : Parse_state.t =
     { open_components = []
@@ -160,9 +163,7 @@ let parse data =
       Or_error.error_s [%message "unterminated component" (unclosed : string list)]
   in
   let%bind () =
-    let missing =
-      Set.diff required_vcalendar_properties final.vcalendar_properties
-    in
+    let missing = Set.diff required_vcalendar_properties final.vcalendar_properties in
     if Set.is_empty missing
     then Ok ()
     else
@@ -170,8 +171,8 @@ let parse data =
         [%message "VCALENDAR missing required properties" (missing : String.Set.t)]
   in
   let%bind uid =
-    match List.dedup_and_sort final.uids ~compare:String.compare with
-    | [] -> Or_error.error_string "no UID found in iCalendar data"
+    match final.uids with
+    | [] -> Or_error.error_s [%message "no UID found in iCalendar data"]
     | [ uid ] -> Ok uid
     | uids ->
       Or_error.error_s
@@ -179,9 +180,5 @@ let parse data =
           "multiple UIDs found; multi-event files not yet supported"
             ~count:(List.length uids : int)]
   in
-  Ok
-    { uid
-    ; cleaned =
-        String.concat ~sep:"\r\n" (List.rev (last :: final.acc)) ^ "\r\n"
-    }
+  Ok { uid; cleaned = String.concat ~sep:"\r\n" (List.rev (last :: final.acc)) ^ "\r\n" }
 ;;
