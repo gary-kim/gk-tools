@@ -19,35 +19,19 @@
   (ocaml-variants
    (= 5.2.0+ox))
   dune
-  (core
-   (>= 0.17.0))
-  (core_unix
-   (>= 0.17.0))
-  (ppx_jane
-   (>= 0.17.0))
-  (async
-   (>= 0.17.0))
-  (cohttp
-   (>= 6.0.0))
-  (cohttp-async
-   (>= 6.0.0))
-  (uri
-   (>= 4.0.0))
-  (sexp_macro
-   (>= 0.17.0))
-  (xdg
-   (>= 3.16.0))
-  (patdiff
-   (>= 0.17.0))
-  (file_path
-   (>= 0.17.0))
-  (filesystem
-   (>= 0.17.0))
-  (jsonaf
-   (>= 0.17.0))
-  (ppx_jsonaf_conv
-   (>= 0.17.0))
-  (async_interactive
-   (>= 0.17.0))
-  ocamlformat
-  dune-build-info))
+  core
+  core_unix
+  ppx_jane
+  async
+  cohttp
+  cohttp-async
+  uri
+  sexp_macro
+  xdg
+  patdiff
+  file_path
+  filesystem
+  jsonaf
+  ppx_jsonaf_conv
+  async_interactive
+  ocamlformat))

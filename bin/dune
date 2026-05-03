@@ -4,6 +4,12 @@
  (promote (until-clean))
  (modes
   (native exe))
- (libraries gk_tools core core_unix.command_unix dune-build-info)
+ (libraries gk_tools core core_unix.command_unix)
  (preprocess
   (pps ppx_jane)))
+
+(rule
+ (deps gen_build_info.sh (universe))
+ (target bin_build_info.ml)
+ (action
+  (bash "./gen_build_info.sh > \"%{target}\"")))
