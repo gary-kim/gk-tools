@@ -48,15 +48,19 @@ let diff_config () =
 ;;
 
 let apply_record (resolved : Resolved.t) =
-  let%bind () =
+  let%map () =
     Deferred.Or_error.try_with ~extract_exn:true (fun () ->
       let%bind.Deferred () =
         Unix.mkdir ~p:() ~perm:0o700 (Filename.dirname resolved.local_target)
       in
-      Writer.save resolved.local_target ~contents:resolved.remote_content ~perm:0o600)
+      Writer.save
+        resolved.local_target
+        ~contents:resolved.remote_content
+        ~perm:0o600
+        ~fsync:true)
   in
   [%log.info "wrote" ~target:(resolved.local_target : string)];
-  return ()
+  ()
 ;;
 
 let check_record_matches (resolved : Resolved.t) =
@@ -131,11 +135,11 @@ let upload ~yes ~home_dir ~id =
     in
     if confirmed
     then (
-      let%bind () =
+      let%map () =
         Rbw_cli.edit_with_content ~folder ~name:resolved.name ~contents:local_content
       in
       [%log.info "uploaded" ~name:(resolved.name : string)];
-      return ())
+      ())
     else (
       [%log.info "upload skipped" ~name:(resolved.name : string)];
       return ())
@@ -163,10 +167,24 @@ let resolve_record ~home_dir name =
   resolve ~home_dir record |> Deferred.return
 ;;
 
-let apply_all ~home_dir =
+let apply ~home_dir ~ids =
   let%bind () = Rbw_cli.sync () in
   let%bind records = Rbw_cli.search ~folder ~term:"" in
-  Deferred.Or_error.List.iter records ~how:`Sequential ~f:(fun name ->
+  let%bind to_apply =
+    match ids with
+    | None -> return records
+    | Some ids ->
+      Nonempty_list.to_list ids
+      |> List.map ~f:(fun id ->
+        match List.filter records ~f:(String.Caseless.equal id) with
+        | [ name ] -> Or_error.return name
+        | [] -> Or_error.error_s [%message "no record matching id" (id : string)]
+        | matches ->
+          Or_error.error_s [%message "ambiguous id" (id : string) (matches : string list)])
+      |> Or_error.combine_errors
+      |> Deferred.return
+  in
+  Deferred.Or_error.List.iter to_apply ~how:`Sequential ~f:(fun name ->
     let%bind resolved = resolve_record ~home_dir name in
     apply_record resolved)
 ;;
@@ -174,14 +192,28 @@ let apply_all ~home_dir =
 let check_all ~home_dir =
   let%bind () = Rbw_cli.sync () in
   let%bind records = Rbw_cli.search ~folder ~term:"" in
-  let%bind matches =
-    Deferred.Or_error.List.map records ~how:`Sequential ~f:(fun name ->
-      let%bind resolved = resolve_record ~home_dir name in
-      check_record_matches resolved)
+  let check_one name : (string * bool) Deferred.Or_error.t =
+    let%bind resolved = resolve_record ~home_dir name in
+    let%map matched = check_record_matches resolved in
+    name, matched
   in
-  if List.for_all matches ~f:Fn.id
-  then return ()
-  else Deferred.Or_error.error_s [%message "files differ from Bitwarden"]
+  let%bind.Deferred per_record =
+    Deferred.List.map records ~how:`Sequential ~f:check_one
+  in
+  let mismatched =
+    List.filter_map per_record ~f:(function
+      | Ok (name, false) -> Some name
+      | _ -> None)
+  in
+  let errors = List.filter_map per_record ~f:Result.error in
+  match mismatched, errors with
+  | [], [] -> return ()
+  | mismatched, [] ->
+    Deferred.Or_error.error_s
+      [%message "files differ from Bitwarden" (mismatched : string list)]
+  | mismatched, _ :: _ ->
+    Deferred.Or_error.error_s
+      [%message "errors during check" (mismatched : string list) (errors : Error.t list)]
 ;;
 
 let check_command =
@@ -193,17 +225,6 @@ let check_command =
      fun () ->
        let%bind home_dir = Deferred.return home_dir_or_error in
        check_all ~home_dir)
-;;
-
-let apply_command =
-  Command.async_or_error
-    ~extract_exn:true
-    ~summary:"Place secret files from Bitwarden at their configured locations"
-    (let%map_open.Command home_dir_or_error = home_dir_param
-     and () = Log.Global.set_level_via_param () in
-     fun () ->
-       let%bind home_dir = Deferred.return home_dir_or_error in
-       apply_all ~home_dir)
 ;;
 
 let id_arg_type =
@@ -219,6 +240,19 @@ let id_arg_type =
              List.filter candidates ~f:(fun name ->
                String.Caseless.is_prefix name ~prefix:part))))
     Fn.id
+;;
+
+let apply_command =
+  Command.async_or_error
+    ~extract_exn:true
+    ~summary:"Place secret files from Bitwarden at their configured locations"
+    (let%map_open.Command home_dir_or_error = home_dir_param
+     and ids = anon (sequence ("ID" %: id_arg_type))
+     and () = Log.Global.set_level_via_param () in
+     fun () ->
+       let ids = Nonempty_list.of_list ids in
+       let%bind home_dir = Deferred.return home_dir_or_error in
+       apply ~home_dir ~ids)
 ;;
 
 let upload_command =

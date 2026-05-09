@@ -1,5 +1,6 @@
 Set up an isolated environment with a fake rbw command and a temporary HOME.
 
+  $ set -o pipefail
   $ export HOME="$PWD/home"
   $ export PATH="$PWD/bin:$PATH"
   $ mkdir -p "$HOME" "$PWD/bin"
@@ -48,14 +49,18 @@ Pre-populate local files for the matching and diff cases.
   $ echo "stale contents" > "$HOME/diff.conf"
 
 Check exits non-zero when any local file differs from its Bitwarden record.
-stdout shows the diff for diff-case and the raw contents for new-case;
-the missing-filepath record causes the iteration to error out.
+Per-file findings come through async_log on stderr; the missing-filepath
+record causes the iteration to error out.
 
-  $ gkt rbw files check 2>/dev/null
+  $ gkt rbw files check |& sed -E 's/^[0-9-]+ [0-9:.+-]+ //; s|'"$HOME"'|$HOME|g'
+  Info ("file matches"(target $HOME/match.conf))
   @|-1,1 +1,1 ============================================================
   -|stale contents
   +|new version
   brand new file
+  Info ("file does not exist locally, printing contents"(target $HOME/new.conf))
+  ("errors during check" (mismatched (diff-case new-case))
+   (errors (("record missing filepath field" (name missing-path)))))
   [1]
 
 Local files should not have been modified.
@@ -64,7 +69,7 @@ Local files should not have been modified.
   matching contents
   $ cat "$HOME/diff.conf"
   stale contents
-  $ test ! -e "$HOME/new.conf"
+  $ [[ ! -e "$HOME/new.conf" ]]
 
 Apply writes all preceding records with 0600 perms and then errors on the
 missing-filepath record.
@@ -81,3 +86,30 @@ missing-filepath record.
   600
   $ stat -c "%a" "$HOME/diff.conf"
   600
+
+Reset the local state so we can re-run apply with explicit ids.
+
+  $ echo "matching contents" > "$HOME/match.conf"
+  $ echo "stale contents" > "$HOME/diff.conf"
+  $ rm -f "$HOME/new.conf"
+
+Apply with explicit ids only touches those records and skips the rest.
+
+  $ gkt rbw files apply diff-case new-case 2>/dev/null
+  $ cat "$HOME/diff.conf"
+  new version
+  $ cat "$HOME/new.conf"
+  brand new file
+  $ cat "$HOME/match.conf"
+  matching contents
+
+Apply with an unknown id errors before writing anything.
+
+  $ rm -f "$HOME/new.conf"
+  $ echo "stale contents" > "$HOME/diff.conf"
+  $ gkt rbw files apply diff-case bogus 2>&1 | tail -1
+  ("no record matching id" (id bogus))
+  [1]
+  $ cat "$HOME/diff.conf"
+  stale contents
+  $ [[ ! -e "$HOME/new.conf" ]]

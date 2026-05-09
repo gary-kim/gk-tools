@@ -1,5 +1,5 @@
 (rule
- (alias executables)
+ (aliases default executables)
  (mode promote)
  (target gkt)
  (deps %{project_root}/bin/main.exe)

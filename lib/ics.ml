@@ -20,7 +20,7 @@ let unfold raw =
     then (
       let cont = String.drop_prefix line 1 in
       match acc with
-      | last :: rest -> (last ^ cont) :: rest
+      | last :: rest -> [%string "%{last}%{cont}"] :: rest
       | [] -> cont :: acc)
     else line :: acc)
   |> List.rev
@@ -180,5 +180,6 @@ let parse data =
           "multiple UIDs found; multi-event files not yet supported"
             ~count:(List.length uids : int)]
   in
-  Ok { uid; cleaned = String.concat ~sep:"\r\n" (List.rev (last :: final.acc)) ^ "\r\n" }
+  let cleaned = String.concat ~sep:"\r\n" (List.rev (last :: final.acc)) in
+  Ok { uid; cleaned = [%string "%{cleaned}\r\n"] }
 ;;

@@ -45,20 +45,14 @@ let aerc_source_credentials source_url =
       | None -> Uri.pct_decode ui, None
       | Some (u, p) -> Uri.pct_decode u, Some (Uri.pct_decode p))
   in
-  let server_url =
-    Uri.make
-      ?scheme:(Uri.scheme uri)
-      ?host:(Uri.host uri)
-      ?port:(Uri.port uri)
-      ~path:(Uri.path uri)
-      ()
-    |> Uri.to_string
-  in
+  let server_url = Uri.with_userinfo uri None |> Uri.to_string in
   { Credentials.server_url
   ; username = Option.map userinfo_parts ~f:fst
   ; password = Option.bind userinfo_parts ~f:snd
   }
 ;;
+
+let redact_url uri = Uri.with_userinfo uri None |> Uri.to_string
 
 let read_aerc_config (aerc : Aerc_config.t)
   : (creds:Credentials.t option * cred_cmd:string option) Deferred.t
@@ -130,14 +124,14 @@ let resolve_credentials ~server_url ~username ~password ~sexp_config ~aerc =
 let build_upload_url ~server_url ~uid =
   let uri = Uri.of_string server_url in
   let base_path = Uri.path uri |> String.rstrip ~drop:(Char.equal '/') in
-  let filename = Uri.pct_encode ~component:`Generic uid ^ ".ics" in
-  Uri.with_path uri (base_path ^ "/" ^ filename) |> Uri.to_string
+  let filename = [%string "%{Uri.pct_encode ~component:`Generic uid}.ics"] in
+  Uri.with_path uri [%string "%{base_path}/%{filename}"]
 ;;
 
 let http_put_timeout = Time_float.Span.of_sec 30.
 
 let http_put ~url ~data ~(creds : Credentials.t) ~force =
-  [%log.debug "CalDAV PUT" (url : string)];
+  [%log.debug "CalDAV PUT" ~url:(redact_url url : string)];
   let headers =
     let base =
       Cohttp.Header.init_with "Content-Type" {|text/calendar; charset="utf-8"|}
@@ -156,11 +150,7 @@ let http_put ~url ~data ~(creds : Credentials.t) ~force =
   let put_and_body =
     Deferred.Or_error.try_with ~extract_exn:true (fun () ->
       let%bind.Deferred response, body =
-        Cohttp_async.Client.put
-          ~headers
-          ~chunked:false
-          ~body:(`String data)
-          (Uri.of_string url)
+        Cohttp_async.Client.put ~headers ~chunked:false ~body:(`String data) url
       in
       let%bind.Deferred body_str = Cohttp_async.Body.to_string body in
       Deferred.return (response, body_str))
@@ -171,7 +161,9 @@ let http_put ~url ~data ~(creds : Credentials.t) ~force =
     | `Timeout ->
       Deferred.Or_error.error_s
         [%message
-          "CalDAV PUT timed out" (url : string) (http_put_timeout : Time_float.Span.t)]
+          "CalDAV PUT timed out"
+            ~url:(redact_url url : string)
+            (http_put_timeout : Time_float.Span.t)]
   in
   let status_code = Cohttp.Code.code_of_status (Cohttp.Response.status response) in
   [%log.debug "CalDAV PUT response" (status_code : int)];
@@ -180,7 +172,10 @@ let http_put ~url ~data ~(creds : Credentials.t) ~force =
   else
     Deferred.Or_error.error_s
       [%message
-        "CalDAV PUT failed" (status_code : int) (url : string) ~response_body:body_str]
+        "CalDAV PUT failed"
+          (status_code : int)
+          ~url:(redact_url url : string)
+          ~response_body:body_str]
 ;;
 
 let read_ics_data = function

@@ -33,10 +33,10 @@ val search : folder:string -> term:string -> string list Deferred.Or_error.t
 (** [get ~folder ~name] runs [rbw get --raw --folder FOLDER NAME] and parses the JSON. *)
 val get : folder:string -> name:string -> Record.t Deferred.Or_error.t
 
-(** [edit_with_content ~folder ~name ~contents] replaces the notes of the given record
-    with [contents] by spawning [rbw edit] under an EDITOR shim that writes [contents] to
-    rbw's edit tempfile. The contents never touch durable storage; they're held in a
-    memfd. *)
+(** [get_field ~folder ~name ~field] runs [rbw get --field FIELD --folder FOLDER NAME] and
+    returns the field value with rbw's trailing newline removed. *)
+val get_field : folder:string -> name:string -> field:string -> string Deferred.Or_error.t
+
 val edit_with_content
   :  folder:string
   -> name:string
