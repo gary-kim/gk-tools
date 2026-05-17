@@ -52,7 +52,7 @@ Check exits non-zero when any local file differs from its Bitwarden record.
 Per-file findings come through async_log on stderr; the missing-filepath
 record causes the iteration to error out.
 
-  $ gkt rbw files check |& sed -E 's/^[0-9-]+ [0-9:.+-]+ //; s|'"$HOME"'|$HOME|g'
+  $ gkt rbw files check |& sed -E 's/^[0-9-]+ [0-9:.+Z-]+ //; s|'"$HOME"'|$HOME|g'
   Info ("file matches"(target $HOME/match.conf))
   @|-1,1 +1,1 ============================================================
   -|stale contents
