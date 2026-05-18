@@ -25,6 +25,8 @@ let resolve_target ~home_dir filepath =
     if String.is_empty rest then home_dir else home_dir ^/ rest)
 ;;
 
+let record_content (record : Rbw_cli.Record.t) = Option.value record.notes ~default:""
+
 let resolve ~home_dir (record : Rbw_cli.Record.t) : Resolved.t Or_error.t =
   match Rbw_cli.Record.field record "filepath" with
   | None ->
@@ -34,7 +36,7 @@ let resolve ~home_dir (record : Rbw_cli.Record.t) : Resolved.t Or_error.t =
     Ok
       { Resolved.name = record.name
       ; local_target = resolve_target ~home_dir filepath
-      ; remote_content = Option.value record.notes ~default:""
+      ; remote_content = record_content record
       }
 ;;
 
@@ -48,19 +50,32 @@ let diff_config () =
 ;;
 
 let apply_record (resolved : Resolved.t) =
-  let%map () =
-    Deferred.Or_error.try_with ~extract_exn:true (fun () ->
-      let%bind.Deferred () =
-        Unix.mkdir ~p:() ~perm:0o700 (Filename.dirname resolved.local_target)
-      in
-      Writer.save
-        resolved.local_target
-        ~contents:resolved.remote_content
-        ~perm:0o600
-        ~fsync:true)
+  let write () =
+    let%map () =
+      Deferred.Or_error.try_with ~extract_exn:true (fun () ->
+        let%bind.Deferred () =
+          Unix.mkdir ~p:() ~perm:0o700 (Filename.dirname resolved.local_target)
+        in
+        Writer.save
+          resolved.local_target
+          ~contents:resolved.remote_content
+          ~perm:0o600
+          ~fsync:true)
+    in
+    [%log.info "wrote" ~target:(resolved.local_target : string)];
+    ()
   in
-  [%log.info "wrote" ~target:(resolved.local_target : string)];
-  ()
+  match%bind.Deferred Sys.file_exists resolved.local_target with
+  | `Yes ->
+    let%bind local_content =
+      Deferred.Or_error.try_with ~extract_exn:true (fun () ->
+        Reader.file_contents resolved.local_target)
+    in
+    if String.equal local_content resolved.remote_content then (
+      [%log.info "file already matches" ~target:(resolved.local_target : string)];
+      return ())
+    else write ()
+  | `No | `Unknown -> write ()
 ;;
 
 let check_record_matches (resolved : Resolved.t) =
@@ -93,18 +108,23 @@ let check_record_matches (resolved : Resolved.t) =
        return false)
 ;;
 
+let find_record_name_in_list ~records ~id =
+  match List.filter records ~f:(String.Caseless.equal id) with
+  | [ name ] -> Or_error.return name
+  | [] -> Or_error.error_s [%message "no record matching id" (id : string)]
+  | matches ->
+    Or_error.error_s [%message "ambiguous id" (id : string) (matches : string list)]
+;;
+
+let find_record_names_in_list ~records ~ids =
+  Nonempty_list.to_list ids
+  |> List.map ~f:(fun id -> find_record_name_in_list ~records ~id)
+  |> Or_error.combine_errors
+;;
+
 let find_record_by_id ~id =
   let%bind candidates = Rbw_cli.search ~folder ~term:"" in
-  let exact = List.filter candidates ~f:(fun name -> String.Caseless.equal name id) in
-  match exact with
-  | [ name ] -> return name
-  | [] ->
-    Deferred.Or_error.error_s
-      [%message "no exact match for id" ~id:(id : string) (candidates : string list)]
-  | _ ->
-    Deferred.Or_error.error_s
-      [%message
-        "ambiguous id (multiple exact matches)" ~id:(id : string) (exact : string list)]
+  find_record_name_in_list ~records:candidates ~id |> Deferred.return
 ;;
 
 let upload ~yes ~home_dir ~id =
@@ -167,22 +187,20 @@ let resolve_record ~home_dir name =
   resolve ~home_dir record |> Deferred.return
 ;;
 
+let cat ~id =
+  let%bind () = Rbw_cli.sync () in
+  let%bind name = find_record_by_id ~id in
+  let%map record = Rbw_cli.get ~folder ~name in
+  print_string (record_content record)
+;;
+
 let apply ~home_dir ~ids =
   let%bind () = Rbw_cli.sync () in
   let%bind records = Rbw_cli.search ~folder ~term:"" in
   let%bind to_apply =
     match ids with
     | None -> return records
-    | Some ids ->
-      Nonempty_list.to_list ids
-      |> List.map ~f:(fun id ->
-        match List.filter records ~f:(String.Caseless.equal id) with
-        | [ name ] -> Or_error.return name
-        | [] -> Or_error.error_s [%message "no record matching id" (id : string)]
-        | matches ->
-          Or_error.error_s [%message "ambiguous id" (id : string) (matches : string list)])
-      |> Or_error.combine_errors
-      |> Deferred.return
+    | Some ids -> find_record_names_in_list ~records ~ids |> Deferred.return
   in
   Deferred.Or_error.List.iter to_apply ~how:`Sequential ~f:(fun name ->
     let%bind resolved = resolve_record ~home_dir name in
@@ -255,6 +273,14 @@ let apply_command =
        apply ~home_dir ~ids)
 ;;
 
+let cat_command =
+  Command.async_or_error
+    ~extract_exn:true
+    ~summary:"Print secret file contents from Bitwarden"
+    (let%map_open.Command id = anon ("ID" %: id_arg_type) in
+     fun () -> cat ~id)
+;;
+
 let upload_command =
   Command.async_or_error
     ~extract_exn:true
@@ -271,7 +297,11 @@ let upload_command =
 let command =
   Command.group
     ~summary:"Manage SECRET_FILES records via rbw"
-    [ "check", check_command; "apply", apply_command; "upload", upload_command ]
+    [ "check", check_command
+    ; "apply", apply_command
+    ; "cat", cat_command
+    ; "upload", upload_command
+    ]
 ;;
 
 module For_testing = struct

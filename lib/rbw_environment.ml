@@ -5,17 +5,18 @@ open Deferred.Or_error.Let_syntax
 let folder = "ENV"
 let prefix = "ENV:"
 
+let env_var_name_re =
+  lazy
+    (let first_char = Re.(alt [ rg 'A' 'Z'; rg 'a' 'z'; char '_' ]) in
+     let rest_char = Re.(alt [ first_char; digit ]) in
+     Re.compile Re.(whole_string (seq [ first_char; rep rest_char ])))
+;;
+
 let validate_name name =
-  let valid_first c = Char.is_alpha c || Char.equal c '_' in
-  let valid_rest c = Char.is_alphanum c || Char.equal c '_' in
-  let well_formed =
-    (not (String.is_empty name))
-    && valid_first name.[0]
-    && String.for_all (String.subo name ~pos:1) ~f:valid_rest
-  in
-  if well_formed
-  then Ok name
-  else Or_error.error_s [%message "invalid env var name" (name : string)]
+  Result.ok_if_true
+    (Re.execp (force env_var_name_re) name)
+    ~error:(Error.of_lazy_sexp [%lazy_message "invalid env var name" (name : string)])
+  |> Result.map ~f:(fun () -> name)
 ;;
 
 let list_env_vars () =
@@ -25,6 +26,65 @@ let list_env_vars () =
 
 let get_env_var ~name =
   Rbw_cli.get_field ~folder ~name:[%string "%{prefix}%{name}"] ~field:"password"
+;;
+
+let check_no_duplicate_names names =
+  Result.ok_if_true
+    (not (List.contains_dup (Nonempty_list.to_list names) ~compare:String.compare))
+    ~error:(Error.of_lazy_sexp [%lazy_message "duplicate env var name"])
+;;
+
+let validate_names names =
+  let open Or_error.Let_syntax in
+  let%map () =
+    Nonempty_list.map names ~f:validate_name
+    |> Nonempty_list.to_list
+    |> Or_error.combine_errors
+    |> Or_error.ignore_m
+  and () = check_no_duplicate_names names in
+  names
+;;
+
+let get_env_vars ~names =
+  Deferred.Or_error.List.map
+    (Nonempty_list.to_list names)
+    ~how:(`Max_concurrent_jobs 4)
+    ~f:(fun name ->
+      let%map value = get_env_var ~name in
+      name, value)
+;;
+
+let command_of_escaped escaped =
+  escaped
+  |> Option.bind ~f:Nonempty_list.of_list
+  |> Or_error.of_option_lazy_sexp ~error:[%lazy_message "command missing after --"]
+;;
+
+let run_process ~env (command : string Nonempty_list.t) =
+  let prog = Nonempty_list.hd command in
+  let argv = Nonempty_list.to_list command in
+  match%bind.Deferred
+    In_thread.run (fun () ->
+      Or_error.try_with (fun () -> Core_unix.fork_exec ~prog ~argv ~env:(`Extend env) ()))
+  with
+  | Error _ ->
+    Deferred.Or_error.error_s
+      [%message "failed to start command" (prog : string) (argv : string list)]
+  | Ok pid ->
+    (match%bind.Deferred Unix.waitpid pid with
+     | Ok () -> Deferred.Or_error.return ()
+     | Error (`Exit_non_zero n) ->
+       Shutdown.shutdown n;
+       Deferred.never ()
+     | Error (`Signal s) ->
+       Shutdown.shutdown (128 + Signal_unix.to_system_int s);
+       Deferred.never ())
+;;
+
+let run_command_with_env ~names command =
+  let%bind () = Rbw_cli.sync () in
+  let%bind env = get_env_vars ~names in
+  run_process ~env command
 ;;
 
 let name_arg_type =
@@ -84,8 +144,28 @@ let export_command =
        ())
 ;;
 
+let exec_command =
+  Command.async_or_error
+    ~extract_exn:true
+    ~summary:"Run a command with selected env vars from rbw"
+    (let%map_open.Command environment =
+       flag
+         "environment"
+         (required (Nonempty_list.comma_separated_argtype ~strip_whitespace:true string))
+         ~doc:"NAMES comma-separated env var names to inject, e.g. FOO,BAR"
+     and command = flag "--" escape ~doc:"COMMAND command and arguments to run" in
+     fun () ->
+       let%bind names = Deferred.return (validate_names environment) in
+       let%bind command = Deferred.return (command_of_escaped command) in
+       run_command_with_env ~names command)
+;;
+
 let command =
   Command.group
     ~summary:"Manage ENV records via rbw"
-    [ "list", list_command; "get", get_command; "export", export_command ]
+    [ "list", list_command
+    ; "get", get_command
+    ; "export", export_command
+    ; "exec", exec_command
+    ]
 ;;

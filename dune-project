@@ -25,6 +25,7 @@
   async
   cohttp
   cohttp-async
+  re
   uri
   sexp_macro
   xdg

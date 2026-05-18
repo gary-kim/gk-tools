@@ -48,6 +48,29 @@ export prints a shell-eval-able line, single-quoting tricky values correctly.
   $ eval "$(gkt rbw environment export BAR_BAZ)" && printf '%s\n' "$BAR_BAZ"
   tricky'value with spaces
 
+exec runs a command with the requested comma-separated env vars.
+
+  $ gkt rbw environment exec -environment FOO,BAR_BAZ -- sh -c 'printf "%s\n" "$FOO" "$BAR_BAZ"'
+  foo-value
+  tricky'value with spaces
+
+exec passes arguments after -- through to the command.
+
+  $ gkt rbw environment exec -environment FOO -- sh -c 'printf "%s\n" "$1"' sh -n
+  -n
+
+exec preserves the child's non-zero exit status, without leaking secrets.
+
+  $ gkt rbw environment exec -environment BAR_BAZ -- sh -c 'exit 7' 2>&1
+  [7]
+
+exec reports spawn failures with a sanitized error (env values not included).
+
+  $ gkt rbw environment exec -environment BAR_BAZ -- definitely-not-a-command 2>&1
+  ("failed to start command" (prog definitely-not-a-command)
+   (argv (definitely-not-a-command)))
+  [1]
+
 Invalid env var names are rejected before rbw is called.
 
   $ rm -f "$RBW_LOG"
@@ -57,4 +80,20 @@ Invalid env var names are rejected before rbw is called.
   $ gkt rbw environment export 'has space' 2>&1 | tail -1
   ("invalid env var name" (name "has space"))
   [1]
+  $ gkt rbw environment exec -environment FOO,1bad -- true 2>&1 | tail -1
+  ("invalid env var name" (name 1bad))
+  [1]
+  $ gkt rbw environment exec -environment 1bad,has-dash -- true 2>&1
+  (("invalid env var name" (name 1bad))
+   ("invalid env var name" (name has-dash)))
+  [1]
+  $ gkt rbw environment exec -environment FOO,FOO -- true 2>&1 | tail -1
+  "duplicate env var name"
+  [1]
   $ test ! -s "$RBW_LOG" || cat "$RBW_LOG"
+
+exec requires a command after --.
+
+  $ gkt rbw environment exec -environment FOO 2>&1
+  "command missing after --"
+  [1]

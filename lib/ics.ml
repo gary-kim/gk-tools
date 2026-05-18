@@ -16,7 +16,7 @@ let unfold raw =
   |> List.fold ~init:[] ~f:(fun acc line ->
     if String.is_empty line
     then acc
-    else if Char.(line.[0] = ' ' || line.[0] = '\t')
+    else if String.is_prefix line ~prefix:" " || String.is_prefix line ~prefix:"\t"
     then (
       let cont = String.drop_prefix line 1 in
       match acc with

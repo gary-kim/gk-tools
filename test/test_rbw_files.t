@@ -47,6 +47,21 @@ Pre-populate local files for the matching and diff cases.
 
   $ echo "matching contents" > "$HOME/match.conf"
   $ echo "stale contents" > "$HOME/diff.conf"
+  $ chmod 644 "$HOME/match.conf"
+
+Cat prints Bitwarden contents for a record.
+
+  $ gkt rbw files cat diff-case
+  new version
+
+Cat resolves the id before printing contents.
+
+  $ gkt rbw files cat bogus 2>&1
+  ("no record matching id" (id bogus))
+  [1]
+
+TODO: add coverage for the ambiguous-id branch of [find_record_name_in_list]
+(e.g. two records whose names are case-insensitively equal).
 
 Check exits non-zero when any local file differs from its Bitwarden record.
 Per-file findings come through async_log on stderr; the missing-filepath
@@ -86,6 +101,8 @@ missing-filepath record.
   600
   $ stat -c "%a" "$HOME/diff.conf"
   600
+  $ stat -c "%a" "$HOME/match.conf"
+  644
 
 Reset the local state so we can re-run apply with explicit ids.
 

@@ -31,9 +31,9 @@ let step (state : Fold_state.t) line =
   let stripped = String.strip line in
   if String.is_empty stripped
   then state
-  else if Char.(stripped.[0] = '#' || stripped.[0] = ';')
+  else if String.is_prefix stripped ~prefix:"#" || String.is_prefix stripped ~prefix:";"
   then state
-  else if Char.(stripped.[0] = '[')
+  else if String.is_prefix stripped ~prefix:"["
   then (
     match
       String.chop_prefix stripped ~prefix:"["

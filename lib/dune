@@ -11,6 +11,7 @@
   cohttp-async
   filesystem.async
   jsonaf
+  re
   uri
   sexp_macro
   xdg
