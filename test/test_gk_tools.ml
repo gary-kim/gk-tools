@@ -5,6 +5,13 @@ open! Async
    that exercise [%log] code paths. *)
 let () = Log.Global.set_output []
 
+let print_ics_parse_error data =
+  match Gk_tools.Ics.parse data with
+  | Ok ics ->
+    print_s [%message "unexpected parse success" ~uid:(Gk_tools.Ics.uid ics : string)]
+  | Error err -> print_s [%sexp (err : Error.t)]
+;;
+
 let%expect_test "parse - simple UID extraction" =
   let data =
     "BEGIN:VCALENDAR\r\n\
@@ -95,10 +102,8 @@ let%expect_test "parse - missing VERSION and PRODID" =
      END:VEVENT\r\n\
      END:VCALENDAR\r\n"
   in
-  print_s
-    [%sexp (Gk_tools.Ics.parse data |> Or_error.map ~f:(Fn.const ()) : unit Or_error.t)];
-  [%expect
-    {| (Error ("VCALENDAR missing required properties" (missing (PRODID VERSION)))) |}];
+  print_ics_parse_error data;
+  [%expect {| ("VCALENDAR missing required properties" (missing (PRODID VERSION))) |}];
   return ()
 ;;
 
@@ -188,18 +193,15 @@ let%expect_test "parse - input without final newline" =
 ;;
 
 let%expect_test "parse - empty input" =
-  print_s
-    [%sexp (Gk_tools.Ics.parse "" |> Or_error.map ~f:(Fn.const ()) : unit Or_error.t)];
-  [%expect {| (Error "iCalendar data too short") |}];
+  print_ics_parse_error "";
+  [%expect {| ("iCalendar data too short" (data "")) |}];
   return ()
 ;;
 
 let%expect_test "parse - bare VCALENDAR envelope" =
   let data = "BEGIN:VCALENDAR\r\nEND:VCALENDAR\r\n" in
-  print_s
-    [%sexp (Gk_tools.Ics.parse data |> Or_error.map ~f:(Fn.const ()) : unit Or_error.t)];
-  [%expect
-    {| (Error ("VCALENDAR missing required properties" (missing (PRODID VERSION)))) |}];
+  print_ics_parse_error data;
+  [%expect {| ("VCALENDAR missing required properties" (missing (PRODID VERSION))) |}];
   return ()
 ;;
 
@@ -217,10 +219,8 @@ let%expect_test "parse - mismatched BEGIN/END component names" =
       ; ""
       ]
   in
-  print_s
-    [%sexp (Gk_tools.Ics.parse data |> Or_error.map ~f:(Fn.const ()) : unit Or_error.t)];
-  [%expect
-    {| (Error ("mismatched BEGIN/END component" (opened VEVENT) (closed VTODO))) |}];
+  print_ics_parse_error data;
+  [%expect {| ("mismatched BEGIN/END component" (opened VEVENT) (closed VTODO)) |}];
   return ()
 ;;
 
@@ -336,9 +336,9 @@ let%expect_test "cleaned - preserves all component content" =
 
 let with_temp_ini ~content ~f =
   Filesystem_async.with_temp_file ~prefix:"test_ini" (fun path ->
-    let path = File_path.Absolute.to_string path in
-    let%bind () = Writer.save path ~contents:content in
-    f path)
+    let path_string = File_path.Absolute.to_string path in
+    let%bind () = Writer.save path_string ~contents:content in
+    f (File_path.of_absolute path))
 ;;
 
 let%expect_test "ini_file - basic read and lookup" =
@@ -588,7 +588,11 @@ let%expect_test "Rbw_files.resolve - typical record" =
       (Gk_tools.Rbw_files.For_testing.resolve ~home_dir:"/home/x" record
        : Gk_tools.Rbw_files.For_testing.Resolved.t Or_error.t)];
   [%expect
-    {| (Ok ((name foo) (local_target /home/x/foo.conf) (remote_content "hello\n"))) |}];
+    {|
+    (Ok
+     ((name foo) (local_target /home/x/foo.conf) (remote_content "hello\n")
+      (mode ())))
+    |}];
   return ()
 ;;
 
@@ -599,8 +603,7 @@ let%expect_test "Rbw_files.resolve - missing filepath" =
   print_s
     [%sexp
       (Gk_tools.Rbw_files.For_testing.resolve ~home_dir:"/home/x" record
-       |> Or_error.map ~f:(Fn.const ())
-       : unit Or_error.t)];
+       : Gk_tools.Rbw_files.For_testing.Resolved.t Or_error.t)];
   [%expect {| (Error ("record missing filepath field" (name foo))) |}];
   return ()
 ;;
@@ -617,6 +620,124 @@ let%expect_test "Rbw_files.resolve - missing notes treated as empty" =
     [%sexp
       (Gk_tools.Rbw_files.For_testing.resolve ~home_dir:"/home/x" record
        : Gk_tools.Rbw_files.For_testing.Resolved.t Or_error.t)];
-  [%expect {| (Ok ((name foo) (local_target /home/x/foo.conf) (remote_content ""))) |}];
+  [%expect
+    {|
+    (Ok
+     ((name foo) (local_target /home/x/foo.conf) (remote_content "") (mode ())))
+    |}];
   return ()
+;;
+
+let%expect_test "Rbw_files.resolve - valid mode field parsed as octal" =
+  let record =
+    { Gk_tools.Rbw_cli.Record.name = "foo"
+    ; fields =
+        [ { Gk_tools.Rbw_cli.Field.name = Some "filepath"; value = Some "~/foo.conf" }
+        ; { Gk_tools.Rbw_cli.Field.name = Some "mode"; value = Some "640" }
+        ]
+    ; notes = Some "hello\n"
+    }
+  in
+  print_s
+    [%sexp
+      (Gk_tools.Rbw_files.For_testing.resolve ~home_dir:"/home/x" record
+       : Gk_tools.Rbw_files.For_testing.Resolved.t Or_error.t)];
+  [%expect
+    {|
+    (Ok
+     ((name foo) (local_target /home/x/foo.conf) (remote_content "hello\n")
+      (mode (416))))
+    |}];
+  return ()
+;;
+
+let%expect_test "Rbw_files.resolve - invalid mode field rejected" =
+  let make_record value =
+    { Gk_tools.Rbw_cli.Record.name = "foo"
+    ; fields =
+        [ { Gk_tools.Rbw_cli.Field.name = Some "filepath"; value = Some "~/foo.conf" }
+        ; { Gk_tools.Rbw_cli.Field.name = Some "mode"; value = Some value }
+        ]
+    ; notes = None
+    }
+  in
+  List.iter [ "8"; ""; "12345"; "0o600"; "abc" ] ~f:(fun value ->
+    print_s
+      [%sexp
+        (Gk_tools.Rbw_files.For_testing.resolve ~home_dir:"/home/x" (make_record value)
+         : Gk_tools.Rbw_files.For_testing.Resolved.t Or_error.t)]);
+  [%expect
+    {|
+    (Error ("invalid mode (must be 1-4 octal digits)" (mode 8)))
+    (Error ("invalid mode (must be 1-4 octal digits)" (mode "")))
+    (Error ("invalid mode (must be 1-4 octal digits)" (mode 12345)))
+    (Error ("invalid mode (must be 1-4 octal digits)" (mode 0o600)))
+    (Error ("invalid mode (must be 1-4 octal digits)" (mode abc)))
+    |}];
+  return ()
+;;
+
+let with_temp_rbw_target ~f =
+  let placeholder = Filename_unix.temp_file "rbw_files" "" in
+  let dir = placeholder ^ ".d" in
+  let target = dir ^/ "secret" in
+  let%bind () = Unix.unlink placeholder in
+  let%bind () = Unix.mkdir dir ~perm:0o700 in
+  Monitor.protect
+    (fun () -> f target)
+    ~finally:(fun () ->
+      let%bind () =
+        match%bind Sys.file_exists target with
+        | `Yes -> Unix.unlink target
+        | `No | `Unknown -> return ()
+      in
+      match%bind Sys.file_exists dir with
+      | `Yes -> Unix.rmdir dir
+      | `No | `Unknown -> return ())
+;;
+
+let rbw_resolved ~target ~content ~mode : Gk_tools.Rbw_files.For_testing.Resolved.t =
+  { name = "foo"; local_target = target; remote_content = content; mode }
+;;
+
+let print_file_perm path =
+  let%map stats = Unix.stat path in
+  printf "0o%o\n" (stats.perm land 0o7777)
+;;
+
+let%expect_test "Rbw_files.apply_record - explicit mode enforced after content write" =
+  with_temp_rbw_target ~f:(fun target ->
+    let%bind () = Writer.save target ~contents:"old" ~perm:0o600 in
+    let%bind () = Unix.chmod target ~perm:0o600 in
+    let%bind () =
+      Gk_tools.Rbw_files.For_testing.apply_record
+        (rbw_resolved ~target ~content:"new" ~mode:(Some 0o640))
+      >>| Or_error.ok_exn
+    in
+    let%bind content = Reader.file_contents target in
+    print_endline content;
+    let%map () = print_file_perm target in
+    [%expect {|
+      new
+      0o640
+      |}])
+;;
+
+let%expect_test "Rbw_files.apply_record - explicit mode overrides umask on create" =
+  with_temp_rbw_target ~f:(fun target ->
+    let old_umask = Core_unix.umask 0o077 in
+    let%map () =
+      Monitor.protect
+        (fun () ->
+          let%bind () =
+            Gk_tools.Rbw_files.For_testing.apply_record
+              (rbw_resolved ~target ~content:"new" ~mode:(Some 0o664))
+            >>| Or_error.ok_exn
+          in
+          print_file_perm target)
+        ~finally:(fun () ->
+          let _ = Core_unix.umask old_umask in
+          return ())
+    in
+    [%expect {| 0o664 |}])
 ;;

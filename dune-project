@@ -23,6 +23,7 @@
   core_unix
   ppx_jane
   async
+  async_ssl
   cohttp
   cohttp-async
   re
@@ -35,4 +36,4 @@
   jsonaf
   ppx_jsonaf_conv
   async_interactive
-  ocamlformat))
+  (ocamlformat :with-dev-setup)))

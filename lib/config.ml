@@ -19,13 +19,14 @@ let caldav_upload t = t.caldav_upload
 
 let default_path () =
   let xdg = Xdg.create ~env:Sys.getenv () in
-  Xdg.config_dir xdg ^/ "gk-tools.sexp"
+  File_path.of_string (Xdg.config_dir xdg ^/ "gk-tools.sexp")
 ;;
 
 let load path =
-  match%bind Sys.file_exists path with
+  let path_string = File_path.to_string path in
+  match%bind Sys.file_exists path_string with
   | `No | `Unknown -> Deferred.Or_error.return empty
-  | `Yes -> Sexp_macro.load_sexp path [%of_sexp: t]
+  | `Yes -> Sexp_macro.load_sexp path_string [%of_sexp: t]
 ;;
 
 let load_default () = load (default_path ())

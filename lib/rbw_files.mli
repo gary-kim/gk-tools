@@ -8,10 +8,18 @@ module For_testing : sig
       { name : string
       ; local_target : string
       ; remote_content : string
+      ; mode : int option
       }
     [@@deriving sexp_of]
   end
 
   val resolve_target : home_dir:string -> string -> string
-  val resolve : home_dir:string -> Rbw_cli.Record.t -> Resolved.t Or_error.t
+
+  val resolve
+    :  ?strict:bool
+    -> home_dir:string
+    -> Rbw_cli.Record.t
+    -> Resolved.t Or_error.t
+
+  val apply_record : Resolved.t -> unit Async.Deferred.Or_error.t
 end

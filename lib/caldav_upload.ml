@@ -4,7 +4,7 @@ open Deferred.Or_error.Let_syntax
 
 module Aerc_config = struct
   type t =
-    { config_file : string
+    { config_file : File_path.t
     ; config_section : string option
     ; key_source : string
     ; key_cred_cmd : string
@@ -12,7 +12,7 @@ module Aerc_config = struct
 
   let default_config_file () =
     let xdg = Xdg.create ~env:Sys.getenv () in
-    Xdg.config_dir xdg ^/ "aerc" ^/ "accounts.conf"
+    File_path.of_string (Xdg.config_dir xdg ^/ "aerc" ^/ "accounts.conf")
   ;;
 end
 
@@ -58,13 +58,14 @@ let read_aerc_config (aerc : Aerc_config.t)
   : (creds:Credentials.t option * cred_cmd:string option) Deferred.t
   =
   let none = ~creds:None, ~cred_cmd:None in
-  match%bind.Deferred Sys.file_exists aerc.config_file with
+  let config_file = File_path.to_string aerc.config_file in
+  match%bind.Deferred Sys.file_exists config_file with
   | `No | `Unknown -> Deferred.return none
   | `Yes ->
     (match%map.Deferred Ini_file.load aerc.config_file with
      | Error err ->
        [%log.error
-         "Failed to parse aerc config" (aerc.config_file : string) (err : Error.t)];
+         "Failed to parse aerc config" (aerc.config_file : File_path.t) (err : Error.t)];
        none
      | Ok ini ->
        let section_and_source =
@@ -130,6 +131,29 @@ let build_upload_url ~server_url ~uid =
 
 let http_put_timeout = Time_float.Span.of_sec 30.
 
+(* Attach this config to every request and let Cohttp decide whether to use it (it ignores
+   [ssl_config] for plaintext connections) rather than re-deciding "is this https?" here
+   and risking a different answer than the library.
+
+   The [verify] callback is an *additional* check run after OpenSSL's chain validation.
+   async_ssl validates the chain by default (verify_modes defaults to [Verify_peer])
+   against the system CA store (set_default_verify_paths, reached because we pass no
+   ca_file/ca_path). OpenSSL does not match the hostname against the cert, so we do that
+   here, failing closed if it doesn't match. *)
+let ssl_config_for_url url =
+  Uri.host url
+  |> Option.map ~f:(fun hostname ->
+    let verify connection =
+      match Async_ssl.Ssl.Connection.check_peer_certificate_host connection hostname with
+      | Ok () -> Deferred.return true
+      | Error err ->
+        [%log.error
+          "TLS certificate verification failed" (hostname : string) (err : Error.t)];
+        Deferred.return false
+    in
+    Conduit_async.V2.Ssl.Config.create ~hostname ~verify ())
+;;
+
 let http_put ~url ~data ~(creds : Credentials.t) ~force =
   [%log.debug "CalDAV PUT" ~url:(redact_url url : string)];
   let headers =
@@ -150,7 +174,12 @@ let http_put ~url ~data ~(creds : Credentials.t) ~force =
   let put_and_body =
     Deferred.Or_error.try_with ~extract_exn:true (fun () ->
       let%bind.Deferred response, body =
-        Cohttp_async.Client.put ~headers ~chunked:false ~body:(`String data) url
+        Cohttp_async.Client.put
+          ?ssl_config:(ssl_config_for_url url)
+          ~headers
+          ~chunked:false
+          ~body:(`String data)
+          url
       in
       let%bind.Deferred body_str = Cohttp_async.Body.to_string body in
       Deferred.return (response, body_str))
@@ -178,12 +207,24 @@ let http_put ~url ~data ~(creds : Credentials.t) ~force =
           ~response_body:body_str]
 ;;
 
+module Input_file = struct
+  type t =
+    | Stdin
+    | File of File_path.t
+
+  let arg_type =
+    Command.Arg_type.map File_path.arg_type ~f:(fun path ->
+      if String.equal (File_path.to_string path) "-" then Stdin else File path)
+  ;;
+end
+
 let read_ics_data = function
-  | Some "-" | None ->
+  | Some Input_file.Stdin | None ->
     Deferred.Or_error.try_with ~extract_exn:true (fun () ->
       Reader.contents (Lazy.force Reader.stdin))
-  | Some path ->
-    Deferred.Or_error.try_with ~extract_exn:true (fun () -> Reader.file_contents path)
+  | Some (File path) ->
+    Deferred.Or_error.try_with ~extract_exn:true (fun () ->
+      Reader.file_contents (File_path.to_string path))
 ;;
 
 let command =
@@ -195,7 +236,7 @@ let command =
      and aerc_config_file =
        flag
          "aerc-config"
-         (optional string)
+         (optional File_path.arg_type)
          ~aliases:[ "c" ]
          ~doc:"FILE aerc accounts.conf path (fallback credential source)"
      and aerc_section =
@@ -233,7 +274,7 @@ let command =
          ~aliases:[ "p" ]
          ~doc:"PASS authentication password (overrides config)"
      and () = Log.Global.set_level_via_param ()
-     and file = anon (maybe ("FILE" %: string)) in
+     and file = anon (maybe ("FILE" %: Input_file.arg_type)) in
      fun () ->
        let%bind ics_data = read_ics_data file in
        let%bind gk_config = Config.load_default () in

@@ -69,10 +69,12 @@ let uid_value raw =
   Option.filter value ~f:(Fn.non String.is_empty)
 ;;
 
-let allowed_vcalendar_properties = String.Set.of_list [ "VERSION"; "PRODID"; "CALSCALE" ]
+let allowed_vcalendar_properties =
+  lazy (String.Set.of_list [ "VERSION"; "PRODID"; "CALSCALE" ])
+;;
 
 (* RFC 5545 §3.4: every iCalendar object MUST include these. *)
-let required_vcalendar_properties = String.Set.of_list [ "VERSION"; "PRODID" ]
+let required_vcalendar_properties = lazy (String.Set.of_list [ "VERSION"; "PRODID" ])
 
 module Parse_state = struct
   type t =
@@ -107,7 +109,7 @@ let step (state : Parse_state.t) raw : Parse_state.t Or_error.t =
     let depth = List.length state.open_components in
     let keep =
       depth > 0
-      || Set.mem allowed_vcalendar_properties name
+      || Set.mem (force allowed_vcalendar_properties) name
       || String.is_prefix name ~prefix:"X-"
     in
     let acc = if keep then raw :: state.acc else state.acc in
@@ -137,16 +139,19 @@ let parse data =
   let open Or_error.Let_syntax in
   let lines = unfold data in
   let%bind first, inner, last =
+    let too_short =
+      Error.create_s [%message "iCalendar data too short" (data : string)]
+    in
     match lines with
-    | first :: (_ :: _ as rest) ->
-      let last = List.last_exn rest in
-      let inner = List.drop_last_exn rest in
+    | first :: rest ->
+      let%bind last = List.last rest |> Or_error.of_option ~error:too_short in
+      let%bind inner = List.drop_last rest |> Or_error.of_option ~error:too_short in
       if not (String.Caseless.equal (String.strip first) "BEGIN:VCALENDAR")
       then Or_error.error_s [%message "expected BEGIN:VCALENDAR" ~got:first]
       else if not (String.Caseless.equal (String.strip last) "END:VCALENDAR")
       then Or_error.error_s [%message "expected END:VCALENDAR" ~got:last]
       else Ok (first, inner, last)
-    | _ -> Or_error.error_s [%message "iCalendar data too short"]
+    | _ -> Error too_short
   in
   let init : Parse_state.t =
     { open_components = []
@@ -163,7 +168,9 @@ let parse data =
       Or_error.error_s [%message "unterminated component" (unclosed : string list)]
   in
   let%bind () =
-    let missing = Set.diff required_vcalendar_properties final.vcalendar_properties in
+    let missing =
+      Set.diff (force required_vcalendar_properties) final.vcalendar_properties
+    in
     if Set.is_empty missing
     then Ok ()
     else

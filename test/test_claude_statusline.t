@@ -1,5 +1,6 @@
 The Claude statusline command reads JSON on stdin and writes one status line.
 
+  $ set -o pipefail
   $ gkt misc claude statusline << 'EOF'
   > {"model":{"display_name":"Opus"},
   >  "cost":{"total_cost_usd":1.23456},

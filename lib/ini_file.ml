@@ -67,7 +67,8 @@ let parse_string contents =
 
 let load path =
   let%bind.Deferred.Or_error contents =
-    Deferred.Or_error.try_with ~extract_exn:true (fun () -> Reader.file_contents path)
+    Deferred.Or_error.try_with ~extract_exn:true (fun () ->
+      Reader.file_contents (File_path.to_string path))
   in
   Deferred.Or_error.return (parse_string contents)
 ;;

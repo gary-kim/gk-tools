@@ -63,22 +63,11 @@ let command_of_escaped escaped =
 let run_process ~env (command : string Nonempty_list.t) =
   let prog = Nonempty_list.hd command in
   let argv = Nonempty_list.to_list command in
-  match%bind.Deferred
+  let%bind pid =
     In_thread.run (fun () ->
       Or_error.try_with (fun () -> Core_unix.fork_exec ~prog ~argv ~env:(`Extend env) ()))
-  with
-  | Error _ ->
-    Deferred.Or_error.error_s
-      [%message "failed to start command" (prog : string) (argv : string list)]
-  | Ok pid ->
-    (match%bind.Deferred Unix.waitpid pid with
-     | Ok () -> Deferred.Or_error.return ()
-     | Error (`Exit_non_zero n) ->
-       Shutdown.shutdown n;
-       Deferred.never ()
-     | Error (`Signal s) ->
-       Shutdown.shutdown (128 + Signal_unix.to_system_int s);
-       Deferred.never ())
+  in
+  Unix.waitpid pid |> Deferred.map ~f:Or_error.return
 ;;
 
 let run_command_with_env ~names command =
@@ -151,13 +140,28 @@ let exec_command =
     (let%map_open.Command environment =
        flag
          "environment"
-         (required (Nonempty_list.comma_separated_argtype ~strip_whitespace:true string))
+         (required
+            (Nonempty_list.comma_separated_argtype
+               ~strip_whitespace:true
+               ~unique_values:true
+               name_arg_type))
          ~doc:"NAMES comma-separated env var names to inject, e.g. FOO,BAR"
+     (* TODO: use [escape_with_autocomplete] with [compgen -c] for the program slot and
+        [compgen -f] for subsequent args so the post-[--] command and its args
+        tab-complete. *)
      and command = flag "--" escape ~doc:"COMMAND command and arguments to run" in
      fun () ->
        let%bind names = Deferred.return (validate_names environment) in
        let%bind command = Deferred.return (command_of_escaped command) in
-       run_command_with_env ~names command)
+       let%bind status = run_command_with_env ~names command in
+       match status with
+       | Ok () -> return ()
+       | Error (`Exit_non_zero n) ->
+         Shutdown.shutdown n;
+         Deferred.never ()
+       | Error (`Signal s) ->
+         Shutdown.shutdown (128 + Signal_unix.to_system_int s);
+         Deferred.never ())
 ;;
 
 let command =

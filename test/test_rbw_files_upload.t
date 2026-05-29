@@ -1,5 +1,6 @@
 Set up an isolated environment with a fake rbw command and a temporary HOME.
 
+  $ set -o pipefail
   $ export HOME="$PWD/home"
   $ export PATH="$PWD/bin:$PATH"
   $ mkdir -p "$HOME" "$PWD/bin"

@@ -64,11 +64,10 @@ exec preserves the child's non-zero exit status, without leaking secrets.
   $ gkt rbw environment exec -environment BAR_BAZ -- sh -c 'exit 7' 2>&1
   [7]
 
-exec reports spawn failures with a sanitized error (env values not included).
+exec surfaces the underlying spawn error.
 
   $ gkt rbw environment exec -environment BAR_BAZ -- definitely-not-a-command 2>&1
-  ("failed to start command" (prog definitely-not-a-command)
-   (argv (definitely-not-a-command)))
+  (Core_unix.fork_exec (exec definitely-not-a-command) ENOENT)
   [1]
 
 Invalid env var names are rejected before rbw is called.

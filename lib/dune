@@ -7,8 +7,10 @@
   core_unix.linux_ext
   async
   async_interactive
+  async_ssl
   cohttp
   cohttp-async
+  file_path
   filesystem.async
   jsonaf
   re

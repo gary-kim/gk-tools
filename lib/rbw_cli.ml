@@ -67,7 +67,7 @@ let get ~folder ~name =
 let get_field ~folder ~name ~field =
   let%bind () = validated_args [ "folder", folder; "name", name; "field", field ] in
   let%map output = rbw [ "get"; "--field"; field; "--folder"; folder; "--"; name ] in
-  String.chop_suffix output ~suffix:"\n" |> Option.value ~default:output
+  String.chop_suffix_if_exists output ~suffix:"\n"
 ;;
 
 let edit_with_content ~folder ~name ~contents =
