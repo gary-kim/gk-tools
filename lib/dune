@@ -5,6 +5,7 @@
   core_unix
   core_unix.bigstring_unix
   core_unix.linux_ext
+  core_unix.time_ns_unix
   async
   async_interactive
   async_ssl
