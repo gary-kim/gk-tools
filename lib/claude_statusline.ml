@@ -60,9 +60,9 @@ let format_optional_int = Option.value_map ~default:"" ~f:Int.to_string
 let format_cost cost = sprintf "%.3f" cost
 let format_percentage pct = sprintf "%.0f%%" pct
 
-let format_reset_time resets_at =
+let format_clock epoch_seconds =
   let zone = Lazy.force Time_ns_unix.Zone.local in
-  let time = Time_ns.of_span_since_epoch (Time_ns.Span.of_int_sec resets_at) in
+  let time = Time_ns.of_span_since_epoch (Time_ns.Span.of_int_sec epoch_seconds) in
   Time_ns_unix.format time "%H:%M" ~zone
 ;;
 
@@ -104,12 +104,12 @@ let rate_limit_segment (rate_limits : Input.Rate_limits.t option) =
   | Some { five_hour = None }
   | Some { five_hour = Some { used_percentage = None; _ } } -> None
   | Some { five_hour = Some { used_percentage = Some pct; resets_at } } ->
-    let until =
+    let reset =
       Option.value_map resets_at ~default:"" ~f:(fun resets_at ->
-        let at = format_reset_time resets_at in
-        [%string " until %{at}"])
+        let at = format_clock resets_at in
+        [%string " resets at %{at}"])
     in
-    Some [%string "%{format_percentage pct}%{until}"]
+    Some [%string "%{format_percentage pct}%{reset}"]
 ;;
 
 let render raw =
@@ -120,15 +120,14 @@ let render raw =
   in
   let model = Option.bind input.model ~f:(fun model -> model.display_name) in
   let cost =
-    let dollars =
-      Option.bind input.cost ~f:(fun cost -> cost.total_cost_usd)
-      |> Option.map ~f:(fun cost -> [%string "$%{format_cost cost}"])
-    in
-    match List.filter_opt [ dollars; rate_limit_segment input.rate_limits ] with
-    | [] -> None
-    | parts -> Some (String.concat ~sep:" " parts)
+    Option.bind input.cost ~f:(fun cost -> cost.total_cost_usd)
+    |> Option.map ~f:(fun cost -> [%string "$%{format_cost cost}"])
   in
-  [ model; cost; context_segment input.context_window ]
+  [ model
+  ; cost
+  ; rate_limit_segment input.rate_limits
+  ; context_segment input.context_window
+  ]
   |> List.filter_opt
   |> String.concat ~sep:" | "
 ;;
