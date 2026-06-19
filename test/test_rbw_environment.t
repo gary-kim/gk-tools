@@ -96,3 +96,21 @@ exec requires a command after --.
   $ gkt rbw environment exec -environment FOO 2>&1
   "command missing after --"
   [1]
+
+Continue on sync failure.
+
+  $ cat > bin/rbw << 'EOF'
+  > #!/usr/bin/env bash
+  > set -euf -o pipefail
+  > cmd="$1"; shift
+  > case "$cmd" in
+  >   sync) echo "rbw sync: no network" >&2; exit 1 ;;
+  >   search) echo "ENV/ENV:FOO" ;;
+  >   get) printf 'foo-value\n' ;;
+  > esac
+  > EOF
+
+  $ gkt rbw environment get FOO 2>/dev/null
+  foo-value
+  $ gkt rbw environment get FOO 2>&1 >/dev/null | cut -d' ' -f3-
+  Warn ("rbw sync failed; continuing with cached vault"(output((stdout"")(stderr("rbw sync: no network"""))(exit_status(Error(Exit_non_zero 1))))))

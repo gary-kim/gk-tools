@@ -20,6 +20,7 @@ module Record : sig
   val field : t -> string -> string option
 end
 
+(** [sync ()] runs [rbw sync] with a timeout. *)
 val sync : unit -> unit Deferred.Or_error.t
 
 (** [is_unlocked ()] runs [rbw unlocked] and returns whether the vault is unlocked. Does

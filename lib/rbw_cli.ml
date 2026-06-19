@@ -28,7 +28,22 @@ module Record = struct
 end
 
 let rbw args = Process.run ~prog:"rbw" ~args ()
-let sync () = rbw [ "sync" ] |> Deferred.Or_error.ignore_m
+
+let sync () =
+  let%bind process = Process.create ~prog:"rbw" ~args:[ "sync" ] () in
+  let finished = Process.collect_output_and_wait process in
+  match%bind.Deferred Clock_ns.with_timeout (Time_ns.Span.of_int_sec 10) finished with
+  | `Result { exit_status = Ok (); _ } -> return ()
+  | `Result output ->
+    [%log.warn
+      "rbw sync failed; continuing with cached vault" (output : Process.Output.t)];
+    return ()
+  | `Timeout ->
+    Process.send_signal process Signal.int;
+    don't_wait_for (Deferred.ignore_m finished);
+    [%log.warn "rbw sync timed out; continuing with cached vault"];
+    return ()
+;;
 
 let is_unlocked () =
   Process.run ~prog:"rbw" ~args:[ "unlocked" ] () |> Deferred.map ~f:Result.is_ok
