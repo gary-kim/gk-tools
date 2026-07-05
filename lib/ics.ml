@@ -55,15 +55,25 @@ let classify raw : Line_kind.t =
     | None -> Malformed raw)
 ;;
 
+let unquoted_colon_index str =
+  String.fold_until
+    str
+    ~init:(0, false)
+    ~f:(fun (idx, in_quotes) c ->
+      match c with
+      | '"' -> Continue (idx + 1, not in_quotes)
+      | ':' when not in_quotes -> Stop (Some idx)
+      | _ -> Continue (idx + 1, in_quotes))
+    ~finish:(const None)
+;;
+
 let uid_value raw =
   let value =
     if String.Caseless.is_prefix raw ~prefix:"UID:"
-    then Some (String.strip (String.drop_prefix raw (String.length "UID:")))
-    else if String.Caseless.is_prefix raw ~prefix:"UID;"
-    then (
-      let upper = String.uppercase raw in
-      String.substr_index upper ~pattern:":" ~pos:(String.length "UID;")
-      |> Option.map ~f:(fun idx -> String.strip (String.drop_prefix raw (idx + 1))))
+       || String.Caseless.is_prefix raw ~prefix:"UID;"
+    then
+      unquoted_colon_index raw
+      |> Option.map ~f:(fun idx -> String.strip (String.drop_prefix raw (idx + 1)))
     else None
   in
   Option.filter value ~f:(Fn.non String.is_empty)

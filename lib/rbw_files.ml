@@ -369,7 +369,8 @@ let cat_command =
   Command.async_or_error
     ~extract_exn:true
     ~summary:"Print secret file contents from Bitwarden"
-    (let%map_open.Command id = anon ("ID" %: id_arg_type) in
+    (let%map_open.Command id = anon ("ID" %: id_arg_type)
+     and () = Log.Global.set_level_via_param () in
      fun () -> cat ~id)
 ;;
 

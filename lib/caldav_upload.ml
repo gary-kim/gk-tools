@@ -129,7 +129,7 @@ let build_upload_url ~server_url ~uid =
   Uri.with_path uri [%string "%{base_path}/%{filename}"]
 ;;
 
-let http_put_timeout = Time_float.Span.of_sec 30.
+let http_put_timeout = Time_ns.Span.of_int_sec 30
 
 (* Attach this config to every request and let Cohttp decide whether to use it (it ignores
    [ssl_config] for plaintext connections) rather than re-deciding "is this https?" here
@@ -185,14 +185,14 @@ let http_put ~url ~data ~(creds : Credentials.t) ~force =
       Deferred.return (response, body_str))
   in
   let%bind response, body_str =
-    match%bind.Deferred Clock.with_timeout http_put_timeout put_and_body with
+    match%bind.Deferred Clock_ns.with_timeout http_put_timeout put_and_body with
     | `Result r -> Deferred.return r
     | `Timeout ->
       Deferred.Or_error.error_s
         [%message
           "CalDAV PUT timed out"
             ~url:(redact_url url : string)
-            (http_put_timeout : Time_float.Span.t)]
+            (http_put_timeout : Time_ns.Span.t)]
   in
   let status_code = Cohttp.Code.code_of_status (Cohttp.Response.status response) in
   [%log.debug "CalDAV PUT response" (status_code : int)];

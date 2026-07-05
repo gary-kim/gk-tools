@@ -61,6 +61,26 @@ let%expect_test "parse - UID with parameters" =
   return ()
 ;;
 
+let%expect_test "parse - UID with quoted parameter containing colon" =
+  let data =
+    String.concat
+      ~sep:"\r\n"
+      [ "BEGIN:VCALENDAR"
+      ; "VERSION:2.0"
+      ; "PRODID:-//Test//Test//EN"
+      ; "BEGIN:VEVENT"
+      ; {|UID;X-CLIENT="prefix:suffix":quoted-param-uid|}
+      ; "END:VEVENT"
+      ; "END:VCALENDAR"
+      ; ""
+      ]
+  in
+  let ics = Gk_tools.Ics.parse data |> Or_error.ok_exn in
+  print_endline (Gk_tools.Ics.uid ics);
+  [%expect {| quoted-param-uid |}];
+  return ()
+;;
+
 let%expect_test "parse - no UID" =
   let data =
     "BEGIN:VCALENDAR\r\n\
@@ -195,6 +215,12 @@ let%expect_test "parse - input without final newline" =
 let%expect_test "parse - empty input" =
   print_ics_parse_error "";
   [%expect {| ("iCalendar data too short" (data "")) |}];
+  return ()
+;;
+
+let%expect_test "parse - single-line input" =
+  print_ics_parse_error "BEGIN:VCALENDAR";
+  [%expect {| ("iCalendar data too short" (data BEGIN:VCALENDAR)) |}];
   return ()
 ;;
 
