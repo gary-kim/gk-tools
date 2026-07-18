@@ -4,7 +4,9 @@ let command =
   Command.group
     ~summary:"gk-tools: personal tools binary"
     [ "caldav-upload", Gk_tools.Caldav_upload.command
+    ; "git", Gk_tools.Git_commands.command
     ; "misc", Gk_tools.Misc_commands.command
+    ; "notmuch", Gk_tools.Notmuch_git.command
     ; "rbw", Gk_tools.Rbw_commands.command
     ]
 ;;

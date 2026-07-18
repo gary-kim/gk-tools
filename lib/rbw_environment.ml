@@ -63,6 +63,7 @@ let command_of_escaped escaped =
 let run_process ~env (command : string Nonempty_list.t) =
   let prog = Nonempty_list.hd command in
   let argv = Nonempty_list.to_list command in
+  Logged_process.log ~prog ~args:(Nonempty_list.tl command);
   let%bind pid =
     In_thread.run (fun () ->
       Or_error.try_with (fun () -> Core_unix.fork_exec ~prog ~argv ~env:(`Extend env) ()))

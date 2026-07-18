@@ -68,3 +68,13 @@ A non-matching needle should fail.
 
   $ gkt rbw files upload -yes does-not-exist 2>/dev/null
   [1]
+
+Without -yes, a non-interactive stdin/stdout is an error, not a hang.
+
+  $ printf 'n\n' | timeout 10 gkt rbw files upload upload-target 2>&1
+  @|-1,1 +1,2 ============================================================
+  -|old contents
+  +|fresh local content
+  +|line two
+  "stdin/stdout is not a tty: pass -yes to skip the confirmation prompt"
+  [1]

@@ -7,3 +7,7 @@
 
 (cram
  (deps %{bin:gkt}))
+
+(cram
+ (applies_to test_notmuch_git)
+ (enabled_if %{bin-available:notmuch-git}))

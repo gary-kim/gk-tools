@@ -11,11 +11,33 @@ module Caldav_upload_settings = struct
   [@@deriving sexp]
 end
 
-type t = { caldav_upload : Caldav_upload_settings.t option [@sexp.option] }
+module Git_managed_sync_settings = struct
+  module Repo = struct
+    type t =
+      { id : string
+      ; dir : string
+      }
+    [@@deriving sexp]
+  end
+
+  type t = { repos : Repo.t list [@sexp.list] } [@@deriving sexp]
+end
+
+module Notmuch_git_settings = struct
+  type t = { remote : string } [@@deriving sexp]
+end
+
+type t =
+  { caldav_upload : Caldav_upload_settings.t option [@sexp.option]
+  ; git_managed_sync : Git_managed_sync_settings.t option [@sexp.option]
+  ; notmuch_git : Notmuch_git_settings.t option [@sexp.option]
+  }
 [@@deriving sexp]
 
-let empty = { caldav_upload = None }
+let empty = { caldav_upload = None; git_managed_sync = None; notmuch_git = None }
 let caldav_upload t = t.caldav_upload
+let git_managed_sync t = t.git_managed_sync
+let notmuch_git t = t.notmuch_git
 
 let default_path () =
   let xdg = Xdg.create ~env:Sys.getenv () in

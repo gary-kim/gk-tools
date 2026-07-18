@@ -37,12 +37,8 @@ let resolve_target ~home_dir filepath =
   if Filename.is_absolute filepath
   then filepath
   else (
-    let rest =
-      if String.equal filepath "~"
-      then ""
-      else Option.value (String.chop_prefix filepath ~prefix:"~/") ~default:filepath
-    in
-    if String.is_empty rest then home_dir else home_dir ^/ rest)
+    let rest = Option.value (Home_path.chop_tilde filepath) ~default:filepath in
+    Home_path.under_home ~home:home_dir ~rest)
 ;;
 
 let record_content (record : Rbw_cli.Record.t) = Option.value record.notes ~default:""
@@ -243,7 +239,17 @@ let upload ~yes ~home_dir ~id =
     let%bind confirmed =
       if yes
       then return true
-      else Deferred.ok (Async_interactive.ask_yn ~default:false "Upload?")
+      else (
+        match%bind.Deferred
+          Deferred.both (Unix.isatty (Fd.stdin ())) (Unix.isatty (Fd.stdout ()))
+        with
+        | true, true ->
+          Deferred.Or_error.try_with ~extract_exn:true (fun () ->
+            Async_interactive.ask_yn ~default:false "Upload?")
+        | _ ->
+          Deferred.Or_error.error_s
+            [%message
+              "stdin/stdout is not a tty: pass -yes to skip the confirmation prompt"])
     in
     if confirmed
     then (

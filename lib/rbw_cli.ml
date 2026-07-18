@@ -27,10 +27,10 @@ module Record = struct
   ;;
 end
 
-let rbw args = Process.run ~prog:"rbw" ~args ()
+let rbw args = Logged_process.run ~prog:"rbw" ~args ()
 
 let sync () =
-  let%bind process = Process.create ~prog:"rbw" ~args:[ "sync" ] () in
+  let%bind process = Logged_process.create ~prog:"rbw" ~args:[ "sync" ] () in
   let finished = Process.collect_output_and_wait process in
   match%bind.Deferred Clock_ns.with_timeout (Time_ns.Span.of_int_sec 10) finished with
   | `Result { exit_status = Ok (); _ } -> return ()
@@ -46,7 +46,7 @@ let sync () =
 ;;
 
 let is_unlocked () =
-  Process.run ~prog:"rbw" ~args:[ "unlocked" ] () |> Deferred.map ~f:Result.is_ok
+  Logged_process.run ~prog:"rbw" ~args:[ "unlocked" ] () |> Deferred.map ~f:Result.is_ok
 ;;
 
 let check_no_dash_prefix ~label arg =
@@ -87,7 +87,7 @@ let get_field ~folder ~name ~field =
 
 let edit_with_content ~folder ~name ~contents =
   let%bind () = validated_args [ "folder", folder; "name", name ] in
-  Process.run
+  Logged_process.run
     ~prog:"rbw"
     ~args:[ "edit"; "--folder"; folder; "--"; name ]
     ~stdin:contents

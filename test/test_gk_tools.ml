@@ -1,8 +1,6 @@
 open! Core
 open! Async
 
-(* Silence Async log output so non-deterministic timestamps don't leak into expect tests
-   that exercise [%log] code paths. *)
 let () = Log.Global.set_output []
 
 let print_ics_parse_error data =

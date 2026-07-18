@@ -28,7 +28,7 @@ module Credentials = struct
     | Some _, _ | _, None -> return t
     | None, Some cmd ->
       [%log.debug "Running password command"];
-      let%bind output = Process.run ~prog:"sh" ~args:[ "-c"; cmd ] () in
+      let%bind output = Logged_process.run ~prog:"sh" ~args:[ "-c"; cmd ] () in
       let password = String.strip output in
       if String.is_empty password
       then Deferred.Or_error.error_s [%message "password command produced empty output"]
@@ -131,11 +131,7 @@ let build_upload_url ~server_url ~uid =
 
 let http_put_timeout = Time_ns.Span.of_int_sec 30
 
-(* Attach this config to every request and let Cohttp decide whether to use it (it ignores
-   [ssl_config] for plaintext connections) rather than re-deciding "is this https?" here
-   and risking a different answer than the library.
-
-   The [verify] callback is an *additional* check run after OpenSSL's chain validation.
+(* The [verify] callback is an *additional* check run after OpenSSL's chain validation.
    async_ssl validates the chain by default (verify_modes defaults to [Verify_peer])
    against the system CA store (set_default_verify_paths, reached because we pass no
    ca_file/ca_path). OpenSSL does not match the hostname against the cert, so we do that

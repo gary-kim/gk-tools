@@ -8,9 +8,6 @@ type t =
 let uid t = t.uid
 let cleaned t = t.cleaned
 
-(* RFC 5545 §3.1: a logical content line may be split across multiple physical lines by
-   inserting a CRLF followed by a single space or tab; the receiver unfolds by removing
-   the CRLF and the leading whitespace character. *)
 let unfold raw =
   String.split_lines raw
   |> List.fold ~init:[] ~f:(fun acc line ->
@@ -83,7 +80,6 @@ let allowed_vcalendar_properties =
   lazy (String.Set.of_list [ "VERSION"; "PRODID"; "CALSCALE" ])
 ;;
 
-(* RFC 5545 §3.4: every iCalendar object MUST include these. *)
 let required_vcalendar_properties = lazy (String.Set.of_list [ "VERSION"; "PRODID" ])
 
 module Parse_state = struct
@@ -124,9 +120,7 @@ let step (state : Parse_state.t) raw : Parse_state.t Or_error.t =
     in
     let acc = if keep then raw :: state.acc else state.acc in
     let uids =
-      (* RFC 5545: UID belongs on the primary calendar object (VEVENT, VTODO, VJOURNAL,
-         VFREEBUSY) — not on nested components like VALARM. We only collect at depth 1
-         (direct children of VCALENDAR). *)
+      (* RFC 5545: UID belongs on primary components, not nested ones like VALARM. *)
       if String.equal name "UID" && depth = 1
       then
         Option.value_map (uid_value raw) ~default:state.uids ~f:(fun uid ->

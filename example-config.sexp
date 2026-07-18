@@ -16,4 +16,12 @@
   ;; (-server-url, -username, -password) override these values; the aerc
   ;; accounts.conf fallback fills in anything still unset.
   (username "user@example.com")
-  (password_cmd (:concat "rbw get " (:use host))))))
+  (password_cmd (:concat "rbw get " (:use host)))))
+
+ ;; Repos for [gkt git managed-sync]: all are synced when run with no
+ ;; arguments; an id selects one.
+ (git_managed_sync ((repos (((id repo-a) (dir ~/repo-a))
+                            ((id repo-b) (dir /path/to/repo-b))))))
+
+ ;; Remote for [gkt notmuch setup]; [gkt notmuch sync] needs no config.
+ (notmuch_git ((remote git@git.example.com:notmuch-tags.git))))
