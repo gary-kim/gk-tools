@@ -1,7 +1,10 @@
 (library
  (name test_gk_tools)
  (libraries gk_tools core core_unix async file_path filesystem.async jsonaf)
- (inline_tests)
+ (inline_tests
+  (flags
+   ;; TODO: Remove once ppx_expect is fixed in oxcaml
+   (:standard -source-tree-root .)))
  (preprocess
   (pps ppx_jane)))
 

@@ -67,7 +67,8 @@ exec preserves the child's non-zero exit status, without leaking secrets.
 exec surfaces the underlying spawn error.
 
   $ gkt rbw environment exec -environment BAR_BAZ -- definitely-not-a-command 2>&1
-  (Core_unix.fork_exec (exec definitely-not-a-command) ENOENT)
+  (Unix.Unix_error "No such file or directory" "Core_unix.fork_exec: exec"
+   definitely-not-a-command)
   [1]
 
 Invalid env var names are rejected before rbw is called.
