@@ -143,31 +143,31 @@ let apply_record (resolved : Resolved.t) =
 ;;
 
 let check_record_matches (resolved : Resolved.t) =
+  let diff_from_local ~local_content =
+    Patdiff.Compare_core.diff_strings
+      ~print_global_header:true
+      (diff_config ())
+      ~prev:{ name = resolved.local_target; text = local_content }
+      ~next:
+        { name = [%string "bitwarden:%{resolved.name}"]; text = resolved.remote_content }
+  in
   match%bind.Deferred Sys.file_exists resolved.local_target with
   | `Unknown ->
     Deferred.Or_error.error_s
       [%message
         "cannot determine if file exists" ~target:(resolved.local_target : string)]
   | `No ->
-    [%log.info
-      "file does not exist locally, printing contents"
-        ~target:(resolved.local_target : string)];
-    print_string resolved.remote_content;
+    [%log.info "file does not exist locally" ~target:(resolved.local_target : string)];
+    (match diff_from_local ~local_content:"" with
+     | `Different diff -> print_endline diff
+     | `Same -> ());
     return false
   | `Yes ->
     let%bind local_content =
       Deferred.Or_error.try_with ~extract_exn:true (fun () ->
         Reader.file_contents resolved.local_target)
     in
-    (match
-       Patdiff.Compare_core.diff_strings
-         (diff_config ())
-         ~prev:{ name = resolved.local_target; text = local_content }
-         ~next:
-           { name = [%string "bitwarden:%{resolved.name}"]
-           ; text = resolved.remote_content
-           }
-     with
+    (match diff_from_local ~local_content with
      | `Different diff ->
        print_endline diff;
        return false
@@ -226,6 +226,7 @@ let upload ~yes ~home_dir ~id =
   in
   match
     Patdiff.Compare_core.diff_strings
+      ~print_global_header:true
       (diff_config ())
       ~prev:
         { name = [%string "bitwarden:%{resolved.name}"]; text = resolved.remote_content }

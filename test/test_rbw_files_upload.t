@@ -45,6 +45,8 @@ Upload runs the diff (record vs local) on stdout, then writes local bytes to
 the record. We confirm via the side log that the shim wrote what we expected.
 
   $ gkt rbw files upload -yes upload-target 2>/dev/null
+  ------ bitwarden:upload-target
+  ++++++ $TESTCASE_ROOT/home/target.conf
   @|-1,1 +1,2 ============================================================
   -|old contents
   +|fresh local content
@@ -72,6 +74,8 @@ A non-matching needle should fail.
 Without -yes, a non-interactive stdin/stdout is an error, not a hang.
 
   $ printf 'n\n' | timeout 10 gkt rbw files upload upload-target 2>&1
+  ------ bitwarden:upload-target
+  ++++++ $TESTCASE_ROOT/home/target.conf
   @|-1,1 +1,2 ============================================================
   -|old contents
   +|fresh local content

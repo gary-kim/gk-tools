@@ -69,11 +69,16 @@ record causes the iteration to error out.
 
   $ gkt rbw files check |& sed -E 's/^[0-9-]+ [0-9:.+Z-]+ //; s|'"$HOME"'|$HOME|g'
   Info ("file matches"(target $HOME/match.conf))
+  ------ $HOME/diff.conf
+  ++++++ bitwarden:diff-case
   @|-1,1 +1,1 ============================================================
   -|stale contents
   +|new version
-  brand new file
-  Info ("file does not exist locally, printing contents"(target $HOME/new.conf))
+  ------ $HOME/new.conf
+  ++++++ bitwarden:new-case
+  @|-1,0 +1,1 ============================================================
+  +|brand new file
+  Info ("file does not exist locally"(target $HOME/new.conf))
   ("errors during check" (mismatched (diff-case new-case))
    (errors (("record missing filepath field" (name missing-path)))))
   [1]
