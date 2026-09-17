@@ -20,5 +20,12 @@
   xdg
   patdiff
   patdiff.kernel)
+ (foreign_stubs
+  (language cxx)
+  (names dnf_native_stubs)
+  (flags
+   (:standard -std=c++20 -Werror=switch -DFMT_HEADER_ONLY)))
+ (c_library_flags
+  (-ldnf5 -lstdc++))
  (preprocess
   (pps ppx_jane ppx_jsonaf_conv)))

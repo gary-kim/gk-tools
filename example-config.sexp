@@ -18,6 +18,18 @@
   (username "user@example.com")
   (password_cmd (:concat "rbw get " (:use host)))))
 
+ ;; Packages for [gkt dnf]: what should be explicitly installed (dnf reasons
+ ;; User and Group). Entries are NAME or (NAME MODIFIER ...): [group] marks a
+ ;; comps group/environment whose members are protected from demotion;
+ ;; [(Only_hostname_regex RE)] scopes an entry to hosts whose full hostname
+ ;; matches RE (PCRE; leading ! inverts). [gkt dnf dump] prints entries
+ ;; covering the current box. Keep the list in its own file with
+ ;; (:include dnf-packages.sexp) here, or pass it via [-packages FILE].
+ (dnf ((packages (git
+                  htop
+                  (tlp (Only_hostname_regex "laptop-.*"))
+                  (cloud-server-environment group)))))
+
  ;; Repos for [gkt git managed-sync]: all are synced when run with no
  ;; arguments; an id selects one.
  (git_managed_sync ((repos (((id repo-a) (dir ~/repo-a))

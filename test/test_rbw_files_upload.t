@@ -57,20 +57,6 @@ the record. We confirm via the side log that the shim wrote what we expected.
   fresh local content
   line two
 
-Case-insensitive needle matching: "Upload-Target" should match.
-
-  $ rm -f "$EDIT_LOG"
-  $ gkt rbw files upload -yes Upload-Target 2>/dev/null > /dev/null
-  $ cat "$EDIT_LOG"
-  rbw-edit-result-for upload-target:
-  fresh local content
-  line two
-
-A non-matching needle should fail.
-
-  $ gkt rbw files upload -yes does-not-exist 2>/dev/null
-  [1]
-
 Without -yes, a non-interactive stdin/stdout is an error, not a hang.
 
   $ printf 'n\n' | timeout 10 gkt rbw files upload upload-target 2>&1

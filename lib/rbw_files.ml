@@ -49,6 +49,35 @@ let record_filepath (record : Rbw_cli.Record.t) =
        ~error:[%lazy_message "record missing filepath field" ~name:(record.name : string)]
 ;;
 
+module Host_check = struct
+  type t =
+    | Applies
+    | Mismatch of { pattern : string }
+  [@@deriving sexp_of]
+end
+
+let host_pattern (record : Rbw_cli.Record.t) =
+  List.find record.fields ~f:(fun (f : Rbw_cli.Field.t) ->
+    Option.exists f.name ~f:(String.equal "hosts_regex"))
+  |> Option.value_map ~default:(Ok None) ~f:(fun field ->
+    let open Or_error.Let_syntax in
+    let%bind pattern =
+      field.value
+      |> Or_error.of_option ~error:(Error.create_s [%message "field has no value"])
+    in
+    Host_pattern.of_string_or_error pattern |> Or_error.map ~f:Option.some)
+  |> Or_error.tag_s ~tag:[%message "invalid hosts_regex" ~name:(record.name : string)]
+;;
+
+let host_check ~hostname record =
+  host_pattern record
+  |> Or_error.map ~f:(fun pattern ->
+    match pattern with
+    | Some pattern when not (Host_pattern.matches pattern ~hostname) ->
+      Host_check.Mismatch { pattern = Host_pattern.to_string pattern }
+    | None | Some _ -> Host_check.Applies)
+;;
+
 let resolve ?(strict = true) ~home_dir (record : Rbw_cli.Record.t) : Resolved.t Or_error.t
   =
   let open Or_error.Let_syntax in
@@ -215,10 +244,21 @@ let find_record_by_id ~id =
   find_record_name_in_list ~records:candidates ~id |> Deferred.return
 ;;
 
-let upload ~yes ~home_dir ~id =
+let upload ~yes ~home_dir ~hostname ~id =
   let%bind () = Rbw_cli.sync () in
   let%bind matched_name = find_record_by_id ~id in
   let%bind record = Rbw_cli.get ~folder ~name:matched_name in
+  let%bind () =
+    match%bind host_check ~hostname record |> Deferred.return with
+    | Applies -> return ()
+    | Mismatch { pattern } ->
+      Deferred.Or_error.error_s
+        [%message
+          "record does not apply to this host"
+            ~name:(matched_name : string)
+            (pattern : string)
+            (hostname : string)]
+  in
   let%bind resolved = resolve ~strict:false ~home_dir record |> Deferred.return in
   let%bind local_content =
     Deferred.Or_error.try_with ~extract_exn:true (fun () ->
@@ -237,21 +277,7 @@ let upload ~yes ~home_dir ~id =
     return ()
   | `Different diff ->
     print_endline diff;
-    let%bind confirmed =
-      if yes
-      then return true
-      else (
-        match%bind.Deferred
-          Deferred.both (Unix.isatty (Fd.stdin ())) (Unix.isatty (Fd.stdout ()))
-        with
-        | true, true ->
-          Deferred.Or_error.try_with ~extract_exn:true (fun () ->
-            Async_interactive.ask_yn ~default:false "Upload?")
-        | _ ->
-          Deferred.Or_error.error_s
-            [%message
-              "stdin/stdout is not a tty: pass -yes to skip the confirmation prompt"])
-    in
+    let%bind confirmed = Confirm.ask ~yes ~prompt:"Upload?" in
     if confirmed
     then (
       let%map () =
@@ -281,11 +307,6 @@ let home_dir_param =
   resolve_home_dir home_dir
 ;;
 
-let resolve_record ~home_dir name =
-  let%bind record = Rbw_cli.get ~folder ~name in
-  resolve ~home_dir record |> Deferred.return
-;;
-
 let cat ~id =
   let%bind () = Rbw_cli.sync () in
   let%bind name = find_record_by_id ~id in
@@ -293,33 +314,60 @@ let cat ~id =
   print_string (record_content record)
 ;;
 
-let apply ~home_dir ~ids =
+let apply ~home_dir ~hostname ~ids =
   let%bind () = Rbw_cli.sync () in
   let%bind records = Rbw_cli.search ~folder ~term:"" in
+  let explicit = Option.is_some ids in
   let%bind to_apply =
     match ids with
     | None -> return records
     | Some ids -> find_record_names_in_list ~records ~ids |> Deferred.return
   in
   Deferred.Or_error.List.iter to_apply ~how:`Sequential ~f:(fun name ->
-    let%bind resolved = resolve_record ~home_dir name in
-    apply_record resolved)
+    let%bind record = Rbw_cli.get ~folder ~name in
+    match%bind host_check ~hostname record |> Deferred.return with
+    | Applies ->
+      let%bind resolved = resolve ~home_dir record |> Deferred.return in
+      apply_record resolved
+    | Mismatch { pattern } ->
+      if explicit
+      then
+        Deferred.Or_error.error_s
+          [%message
+            "record does not apply to this host"
+              (name : string)
+              (pattern : string)
+              (hostname : string)]
+      else (
+        [%log.info
+          "skipping (host mismatch)"
+            (name : string)
+            (hostname : string)
+            (pattern : string)];
+        return ()))
 ;;
 
-let check_all ~home_dir =
+let check_all ~home_dir ~hostname =
   let%bind () = Rbw_cli.sync () in
   let%bind records = Rbw_cli.search ~folder ~term:"" in
-  let check_one name : (string * bool) Deferred.Or_error.t =
-    let%bind resolved = resolve_record ~home_dir name in
-    let%map matched = check_record_matches resolved in
-    name, matched
+  let check_one name : (string * bool) option Deferred.Or_error.t =
+    let%bind record = Rbw_cli.get ~folder ~name in
+    match%bind host_check ~hostname record |> Deferred.return with
+    | Mismatch { pattern } ->
+      [%log.info
+        "skipping (host mismatch)" (name : string) (hostname : string) (pattern : string)];
+      return None
+    | Applies ->
+      let%bind resolved = resolve ~home_dir record |> Deferred.return in
+      let%map matched = check_record_matches resolved in
+      Some (name, matched)
   in
   let%bind.Deferred per_record =
     Deferred.List.map records ~how:`Sequential ~f:check_one
   in
   let mismatched =
     List.filter_map per_record ~f:(function
-      | Ok (name, false) -> Some name
+      | Ok (Some (name, false)) -> Some name
       | _ -> None)
   in
   let errors = List.filter_map per_record ~f:Result.error in
@@ -333,15 +381,44 @@ let check_all ~home_dir =
       [%message "errors during check" (mismatched : string list) (errors : Error.t list)]
 ;;
 
+let verify_records ~home_dir =
+  let%bind () = Rbw_cli.sync () in
+  let%bind records = Rbw_cli.search ~folder ~term:"" in
+  let verify_one name =
+    let%bind record = Rbw_cli.get ~folder ~name in
+    Or_error.combine_errors_unit
+      [ host_pattern record |> Or_error.ignore_m
+      ; resolve ~home_dir record |> Or_error.ignore_m
+      ]
+    |> Deferred.return
+  in
+  Deferred.List.map records ~how:`Sequential ~f:(fun name ->
+    verify_one name
+    |> Deferred.Or_error.tag_s ~tag:[%message "invalid record" (name : string)])
+  |> Deferred.map ~f:Or_error.combine_errors_unit
+;;
+
 let check_command =
   Command.async_or_error
     ~extract_exn:true
     ~summary:"Show the diff between local files and their Bitwarden contents"
     (let%map_open.Command home_dir_or_error = home_dir_param
+     and hostname = Host_pattern.hostname_param
      and () = Log.Global.set_level_via_param () in
      fun () ->
        let%bind home_dir = Deferred.return home_dir_or_error in
-       check_all ~home_dir)
+       check_all ~home_dir ~hostname)
+;;
+
+let verify_records_command =
+  Command.async_or_error
+    ~extract_exn:true
+    ~summary:"Validate every record's metadata regardless of host scoping"
+    (let%map_open.Command home_dir_or_error = home_dir_param
+     and () = Log.Global.set_level_via_param () in
+     fun () ->
+       let%bind home_dir = Deferred.return home_dir_or_error in
+       verify_records ~home_dir)
 ;;
 
 let id_arg_type =
@@ -364,12 +441,13 @@ let apply_command =
     ~extract_exn:true
     ~summary:"Place secret files from Bitwarden at their configured locations"
     (let%map_open.Command home_dir_or_error = home_dir_param
+     and hostname = Host_pattern.hostname_param
      and ids = anon (sequence ("ID" %: id_arg_type))
      and () = Log.Global.set_level_via_param () in
      fun () ->
        let ids = Nonempty_list.of_list ids in
        let%bind home_dir = Deferred.return home_dir_or_error in
-       apply ~home_dir ~ids)
+       apply ~home_dir ~hostname ~ids)
 ;;
 
 let cat_command =
@@ -386,21 +464,38 @@ let upload_command =
     ~extract_exn:true
     ~summary:"Upload a local file's bytes back into its rbw record"
     (let%map_open.Command home_dir_or_error = home_dir_param
+     and hostname = Host_pattern.hostname_param
      and yes = flag "yes" no_arg ~doc:" skip the confirmation prompt"
      and id = anon ("ID" %: id_arg_type)
      and () = Log.Global.set_level_via_param () in
      fun () ->
        let%bind home_dir = Deferred.return home_dir_or_error in
-       upload ~yes ~home_dir ~id)
+       upload ~yes ~home_dir ~hostname ~id)
+;;
+
+let readme () =
+  String.strip
+    {|
+Records in the SECRET_FILES Bitwarden folder describe secret files: the
+record's notes hold the file contents, and custom fields control placement:
+
+filepath      required; ~/ and relative paths resolve under $HOME
+mode          optional octal permissions (1-4 digits); 0600 when absent
+hosts_regex   optional regex scoping the record to matching hosts; matched
+              against the whole hostname (FQDN); a leading ! inverts the
+              match; records without the field apply everywhere
+|}
 ;;
 
 let command =
   Command.group
     ~summary:"Manage SECRET_FILES records via rbw"
+    ~readme
     [ "check", check_command
     ; "apply", apply_command
     ; "cat", cat_command
     ; "upload", upload_command
+    ; "verify-records", verify_records_command
     ]
 ;;
 

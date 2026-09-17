@@ -5,6 +5,8 @@ packages:
   - opam
   - gcc
   - gcc-c++
+  - libdnf5-devel
+  - fmt-devel
   - hostname
   - awk
   - bubblewrap

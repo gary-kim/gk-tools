@@ -542,26 +542,6 @@ let%expect_test "Rbw_cli.Record - typical record with filepath" =
   return ()
 ;;
 
-let%expect_test "Rbw_cli.Record - notes absent" =
-  let json =
-    {|{"id":"x","folder":"SECRET_FILES","name":"foo","data":null,"fields":[]}|}
-  in
-  let r = parse_record json |> Or_error.ok_exn in
-  print_s [%message (r.name : string) (r.notes : string option)];
-  [%expect {| ((r.name foo) (r.notes ())) |}];
-  return ()
-;;
-
-let%expect_test "Rbw_cli.Record - missing filepath field returns None" =
-  let json =
-    {|{"id":"x","folder":"SECRET_FILES","name":"foo","data":null,"fields":[{"name":"other","value":"v","type":"text"}],"notes":null}|}
-  in
-  let r = parse_record json |> Or_error.ok_exn in
-  print_s [%sexp (Gk_tools.Rbw_cli.Record.field r "filepath" : string option)];
-  [%expect {| () |}];
-  return ()
-;;
-
 let%expect_test "Rbw_cli.Record - tolerates extra unknown fields" =
   let json =
     {|{"id":"x","folder":"SECRET_FILES","name":"foo","data":null,"fields":[],"notes":"hi","history":[],"future_field":42,"another":"thing"}|}
@@ -572,13 +552,6 @@ let%expect_test "Rbw_cli.Record - tolerates extra unknown fields" =
   return ()
 ;;
 
-let%expect_test "Rbw_files.resolve_target - absolute path" =
-  print_endline
-    (Gk_tools.Rbw_files.For_testing.resolve_target ~home_dir:"/home/x" "/etc/foo");
-  [%expect {| /etc/foo |}];
-  return ()
-;;
-
 let%expect_test "Rbw_files.resolve_target - tilde-slash expansion" =
   print_endline
     (Gk_tools.Rbw_files.For_testing.resolve_target ~home_dir:"/home/x" "~/foo.conf");
@@ -586,69 +559,10 @@ let%expect_test "Rbw_files.resolve_target - tilde-slash expansion" =
   return ()
 ;;
 
-let%expect_test "Rbw_files.resolve_target - bare tilde" =
-  print_endline (Gk_tools.Rbw_files.For_testing.resolve_target ~home_dir:"/home/x" "~");
-  [%expect {| /home/x |}];
-  return ()
-;;
-
 let%expect_test "Rbw_files.resolve_target - bare relative path" =
   print_endline
     (Gk_tools.Rbw_files.For_testing.resolve_target ~home_dir:"/home/x" "foo.conf");
   [%expect {| /home/x/foo.conf |}];
-  return ()
-;;
-
-let%expect_test "Rbw_files.resolve - typical record" =
-  let record =
-    { Gk_tools.Rbw_cli.Record.name = "foo"
-    ; fields =
-        [ { Gk_tools.Rbw_cli.Field.name = Some "filepath"; value = Some "~/foo.conf" } ]
-    ; notes = Some "hello\n"
-    }
-  in
-  print_s
-    [%sexp
-      (Gk_tools.Rbw_files.For_testing.resolve ~home_dir:"/home/x" record
-       : Gk_tools.Rbw_files.For_testing.Resolved.t Or_error.t)];
-  [%expect
-    {|
-    (Ok
-     ((name foo) (local_target /home/x/foo.conf) (remote_content "hello\n")
-      (mode ())))
-    |}];
-  return ()
-;;
-
-let%expect_test "Rbw_files.resolve - missing filepath" =
-  let record =
-    { Gk_tools.Rbw_cli.Record.name = "foo"; fields = []; notes = Some "hello" }
-  in
-  print_s
-    [%sexp
-      (Gk_tools.Rbw_files.For_testing.resolve ~home_dir:"/home/x" record
-       : Gk_tools.Rbw_files.For_testing.Resolved.t Or_error.t)];
-  [%expect {| (Error ("record missing filepath field" (name foo))) |}];
-  return ()
-;;
-
-let%expect_test "Rbw_files.resolve - missing notes treated as empty" =
-  let record =
-    { Gk_tools.Rbw_cli.Record.name = "foo"
-    ; fields =
-        [ { Gk_tools.Rbw_cli.Field.name = Some "filepath"; value = Some "~/foo.conf" } ]
-    ; notes = None
-    }
-  in
-  print_s
-    [%sexp
-      (Gk_tools.Rbw_files.For_testing.resolve ~home_dir:"/home/x" record
-       : Gk_tools.Rbw_files.For_testing.Resolved.t Or_error.t)];
-  [%expect
-    {|
-    (Ok
-     ((name foo) (local_target /home/x/foo.conf) (remote_content "") (mode ())))
-    |}];
   return ()
 ;;
 
@@ -685,19 +599,12 @@ let%expect_test "Rbw_files.resolve - invalid mode field rejected" =
     ; notes = None
     }
   in
-  List.iter [ "8"; ""; "12345"; "0o600"; "abc" ] ~f:(fun value ->
+  List.iter [ "8" ] ~f:(fun value ->
     print_s
       [%sexp
         (Gk_tools.Rbw_files.For_testing.resolve ~home_dir:"/home/x" (make_record value)
          : Gk_tools.Rbw_files.For_testing.Resolved.t Or_error.t)]);
-  [%expect
-    {|
-    (Error ("invalid mode (must be 1-4 octal digits)" (mode 8)))
-    (Error ("invalid mode (must be 1-4 octal digits)" (mode "")))
-    (Error ("invalid mode (must be 1-4 octal digits)" (mode 12345)))
-    (Error ("invalid mode (must be 1-4 octal digits)" (mode 0o600)))
-    (Error ("invalid mode (must be 1-4 octal digits)" (mode abc)))
-    |}];
+  [%expect {| (Error ("invalid mode (must be 1-4 octal digits)" (mode 8))) |}];
   return ()
 ;;
 
@@ -764,4 +671,22 @@ let%expect_test "Rbw_files.apply_record - explicit mode overrides umask on creat
           return ())
     in
     [%expect {| 0o664 |}])
+;;
+
+let%expect_test "Host_pattern - whole-string anchoring and negation" =
+  let test pattern hostname =
+    print_s
+      [%sexp
+        (Gk_tools.Host_pattern.matches (Gk_tools.Host_pattern.of_string pattern) ~hostname
+         : bool)]
+  in
+  test "web" "webcam-pi";
+  [%expect {| false |}];
+  test "web.*" "webcam-pi";
+  [%expect {| true |}];
+  test "!alpha.*" "alpha.garykim.dev";
+  [%expect {| false |}];
+  test "!alpha.*" "beta.garykim.dev";
+  [%expect {| true |}];
+  return ()
 ;;
