@@ -92,21 +92,7 @@ let sync ~dir ~yes ~message =
   | count ->
     let%bind () = print_outgoing_diff ~dir in
     let%bind confirmed =
-      if yes
-      then return true
-      else (
-        match%bind.Deferred
-          Deferred.both (Unix.isatty (Fd.stdin ())) (Unix.isatty (Fd.stdout ()))
-        with
-        | true, true ->
-          Deferred.Or_error.try_with ~extract_exn:true (fun () ->
-            Async_interactive.ask_yn
-              ~default:false
-              [%string "Push %{count#Int} commit(s) to %{dir}?"])
-        | _ ->
-          Deferred.Or_error.error_s
-            [%message
-              "stdin/stdout is not a tty: pass -yes to skip the confirmation prompt"])
+      Confirm.ask ~yes ~prompt:[%string "Push %{count#Int} commit(s) to %{dir}?"]
     in
     if confirmed
     then (
@@ -185,7 +171,7 @@ let command =
          "dir"
          (optional (Nonempty_list.comma_separated_argtype ~strip_whitespace:true string))
          ~doc:"DIRS comma-separated repo directories to sync"
-     and yes = flag "yes" no_arg ~doc:" skip the push confirmation prompt"
+     and yes = Confirm.yes_param
      and message =
        flag
          "message"

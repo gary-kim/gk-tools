@@ -18,6 +18,7 @@ module Record : sig
   [@@deriving jsonaf, sexp_of]
 
   val field : t -> string -> string option
+  val find_field : t -> string -> Field.t option
 end
 
 (** [sync ()] runs [rbw sync] with a timeout. *)

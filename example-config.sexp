@@ -18,6 +18,14 @@
   (username "user@example.com")
   (password_cmd (:concat "rbw get " (:use host)))))
 
+ ;; Packages for [gkt dnf] (see [gkt dnf -help]). [Only_hostname_regex] is PCRE
+ ;; matched against the full hostname; a leading ! inverts it. The list can
+ ;; live in its own file via (:include dnf-packages.sexp).
+ (dnf ((packages (git
+                  htop
+                  (tlp (Only_hostname_regex "laptop-.*"))
+                  (cloud-server-environment group)))))
+
  ;; Repos for [gkt git managed-sync]: all are synced when run with no
  ;; arguments; an id selects one.
  (git_managed_sync ((repos (((id repo-a) (dir ~/repo-a))

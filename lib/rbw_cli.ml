@@ -25,6 +25,11 @@ module Record = struct
       | Some n when String.equal n name -> f.value
       | _ -> None)
   ;;
+
+  let find_field t name =
+    List.find t.fields ~f:(fun (f : Field.t) ->
+      Option.exists f.name ~f:(String.equal name))
+  ;;
 end
 
 let rbw args = Logged_process.run ~prog:"rbw" ~args ()

@@ -60,21 +60,14 @@ let command_of_escaped escaped =
   |> Or_error.of_option_lazy_sexp ~error:[%lazy_message "command missing after --"]
 ;;
 
-let run_process ~env (command : string Nonempty_list.t) =
-  let prog = Nonempty_list.hd command in
-  let argv = Nonempty_list.to_list command in
-  Logged_process.log ~prog ~args:(Nonempty_list.tl command);
-  let%bind pid =
-    In_thread.run (fun () ->
-      Or_error.try_with (fun () -> Core_unix.fork_exec ~prog ~argv ~env:(`Extend env) ()))
-  in
-  Unix.waitpid pid |> Deferred.map ~f:Or_error.return
-;;
-
 let run_command_with_env ~names command =
   let%bind () = Rbw_cli.sync () in
   let%bind env = get_env_vars ~names in
-  run_process ~env command
+  Logged_process.spawn
+    ~env:(`Extend env)
+    ~prog:(Nonempty_list.hd command)
+    ~args:(Nonempty_list.tl command)
+    ()
 ;;
 
 let name_arg_type =

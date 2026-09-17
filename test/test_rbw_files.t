@@ -54,12 +54,6 @@ Cat prints Bitwarden contents for a record.
   $ gkt rbw files cat diff-case
   new version
 
-Cat resolves the id before printing contents.
-
-  $ gkt rbw files cat bogus 2>&1
-  ("no record matching id" (id bogus))
-  [1]
-
 TODO: add coverage for the ambiguous-id branch of [find_record_name_in_list]
 (e.g. two records whose names are case-insensitively equal).
 
@@ -109,14 +103,18 @@ missing-filepath record.
   $ stat -c "%a" "$HOME/match.conf"
   644
 
-Reset the local state so we can re-run apply with explicit ids.
+Reset the local state; an unknown id errors before writing anything, and
+explicit ids only touch those records.
 
   $ echo "matching contents" > "$HOME/match.conf"
   $ echo "stale contents" > "$HOME/diff.conf"
   $ rm -f "$HOME/new.conf"
-
-Apply with explicit ids only touches those records and skips the rest.
-
+  $ gkt rbw files apply diff-case bogus 2>&1 | tail -1
+  ("no record matching id" (id bogus))
+  [1]
+  $ cat "$HOME/diff.conf"
+  stale contents
+  $ [[ ! -e "$HOME/new.conf" ]]
   $ gkt rbw files apply diff-case new-case 2>/dev/null
   $ cat "$HOME/diff.conf"
   new version
@@ -124,14 +122,3 @@ Apply with explicit ids only touches those records and skips the rest.
   brand new file
   $ cat "$HOME/match.conf"
   matching contents
-
-Apply with an unknown id errors before writing anything.
-
-  $ rm -f "$HOME/new.conf"
-  $ echo "stale contents" > "$HOME/diff.conf"
-  $ gkt rbw files apply diff-case bogus 2>&1 | tail -1
-  ("no record matching id" (id bogus))
-  [1]
-  $ cat "$HOME/diff.conf"
-  stale contents
-  $ [[ ! -e "$HOME/new.conf" ]]

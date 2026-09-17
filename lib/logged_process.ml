@@ -12,3 +12,13 @@ let create ~prog ~args () =
   log ~prog ~args;
   Process.create ~prog ~args ()
 ;;
+
+let spawn ?env ~prog ~args () =
+  log ~prog ~args;
+  let%bind.Deferred () = Writer.flushed (force Writer.stdout) in
+  let%bind.Deferred.Or_error pid =
+    Deferred.Or_error.try_with ~extract_exn:true (fun () ->
+      Unix.fork_exec ?env ~prog ~argv:(prog :: args) ())
+  in
+  Unix.waitpid pid |> Deferred.map ~f:Or_error.return
+;;
