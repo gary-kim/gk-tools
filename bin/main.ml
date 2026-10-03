@@ -8,6 +8,7 @@ let command =
     ; "misc", Gk_tools.Misc_commands.command
     ; "notmuch", Gk_tools.Notmuch_git.command
     ; "rbw", Gk_tools.Rbw_commands.command
+    ; "workstation-ansible", Gk_tools.Workstation_ansible.command
     ]
 ;;
 

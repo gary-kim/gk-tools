@@ -26,6 +26,7 @@
   async_ssl
   cohttp
   cohttp-async
+  conduit-async
   re
   uri
   sexp_macro

@@ -11,8 +11,10 @@
   async_ssl
   cohttp
   cohttp-async
+  conduit-async
   file_path
   filesystem.async
+  filesystem.types_unix
   jsonaf
   re
   uri
