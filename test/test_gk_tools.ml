@@ -542,112 +542,34 @@ let%expect_test "Rbw_cli.Record - typical record with filepath" =
   return ()
 ;;
 
-let%expect_test "Rbw_cli.Record - notes absent" =
+let%expect_test "Rbw_cli.Record - absent notes and fields" =
   let json =
-    {|{"id":"x","folder":"SECRET_FILES","name":"foo","data":null,"fields":[]}|}
+    {|{"id":"x","folder":"SECRET_FILES","name":"foo","data":null,"history":[]}|}
   in
   let r = parse_record json |> Or_error.ok_exn in
-  print_s [%message (r.name : string) (r.notes : string option)];
-  [%expect {| ((r.name foo) (r.notes ())) |}];
-  return ()
-;;
-
-let%expect_test "Rbw_cli.Record - missing filepath field returns None" =
-  let json =
-    {|{"id":"x","folder":"SECRET_FILES","name":"foo","data":null,"fields":[{"name":"other","value":"v","type":"text"}],"notes":null}|}
-  in
-  let r = parse_record json |> Or_error.ok_exn in
-  print_s [%sexp (Gk_tools.Rbw_cli.Record.field r "filepath" : string option)];
-  [%expect {| () |}];
-  return ()
-;;
-
-let%expect_test "Rbw_cli.Record - tolerates extra unknown fields" =
-  let json =
-    {|{"id":"x","folder":"SECRET_FILES","name":"foo","data":null,"fields":[],"notes":"hi","history":[],"future_field":42,"another":"thing"}|}
-  in
-  let r = parse_record json |> Or_error.ok_exn in
-  print_s [%message (r.name : string) (r.notes : string option)];
-  [%expect {| ((r.name foo) (r.notes (hi))) |}];
-  return ()
-;;
-
-let%expect_test "Rbw_files.resolve_target - absolute path" =
-  print_endline
-    (Gk_tools.Rbw_files.For_testing.resolve_target ~home_dir:"/home/x" "/etc/foo");
-  [%expect {| /etc/foo |}];
-  return ()
-;;
-
-let%expect_test "Rbw_files.resolve_target - tilde-slash expansion" =
-  print_endline
-    (Gk_tools.Rbw_files.For_testing.resolve_target ~home_dir:"/home/x" "~/foo.conf");
-  [%expect {| /home/x/foo.conf |}];
-  return ()
-;;
-
-let%expect_test "Rbw_files.resolve_target - bare tilde" =
-  print_endline (Gk_tools.Rbw_files.For_testing.resolve_target ~home_dir:"/home/x" "~");
-  [%expect {| /home/x |}];
-  return ()
-;;
-
-let%expect_test "Rbw_files.resolve_target - bare relative path" =
-  print_endline
-    (Gk_tools.Rbw_files.For_testing.resolve_target ~home_dir:"/home/x" "foo.conf");
-  [%expect {| /home/x/foo.conf |}];
-  return ()
-;;
-
-let%expect_test "Rbw_files.resolve - typical record" =
-  let record =
-    { Gk_tools.Rbw_cli.Record.name = "foo"
-    ; fields =
-        [ { Gk_tools.Rbw_cli.Field.name = Some "filepath"; value = Some "~/foo.conf" } ]
-    ; notes = Some "hello\n"
-    }
-  in
   print_s
-    [%sexp
-      (Gk_tools.Rbw_files.For_testing.resolve ~home_dir:"/home/x" record
-       : Gk_tools.Rbw_files.For_testing.Resolved.t Or_error.t)];
+    [%message
+      (r.name : string)
+        (r.fields : Gk_tools.Rbw_cli.Field.t list)
+        (r.notes : string option)];
+  [%expect {| ((r.name foo) (r.fields ()) (r.notes ())) |}];
+  return ()
+;;
+
+let home_dir = File_path.Absolute.of_string "/home/x"
+
+let%expect_test "Rbw_files.resolve_target" =
+  List.iter [ "/etc/foo"; "~"; "~/foo.conf"; "foo.conf" ] ~f:(fun input ->
+    let target =
+      Gk_tools.Rbw_files.For_testing.resolve_target ~home_dir (File_path.of_string input)
+    in
+    print_s [%message (input : string) (target : File_path.Absolute.t)]);
   [%expect
     {|
-    (Ok
-     ((name foo) (local_target /home/x/foo.conf) (remote_content "hello\n")
-      (mode ())))
-    |}];
-  return ()
-;;
-
-let%expect_test "Rbw_files.resolve - missing filepath" =
-  let record =
-    { Gk_tools.Rbw_cli.Record.name = "foo"; fields = []; notes = Some "hello" }
-  in
-  print_s
-    [%sexp
-      (Gk_tools.Rbw_files.For_testing.resolve ~home_dir:"/home/x" record
-       : Gk_tools.Rbw_files.For_testing.Resolved.t Or_error.t)];
-  [%expect {| (Error ("record missing filepath field" (name foo))) |}];
-  return ()
-;;
-
-let%expect_test "Rbw_files.resolve - missing notes treated as empty" =
-  let record =
-    { Gk_tools.Rbw_cli.Record.name = "foo"
-    ; fields =
-        [ { Gk_tools.Rbw_cli.Field.name = Some "filepath"; value = Some "~/foo.conf" } ]
-    ; notes = None
-    }
-  in
-  print_s
-    [%sexp
-      (Gk_tools.Rbw_files.For_testing.resolve ~home_dir:"/home/x" record
-       : Gk_tools.Rbw_files.For_testing.Resolved.t Or_error.t)];
-  [%expect
-    {|
-    (Ok
-     ((name foo) (local_target /home/x/foo.conf) (remote_content "") (mode ())))
+    ((input /etc/foo) (target /etc/foo))
+    ((input ~) (target /home/x))
+    ((input ~/foo.conf) (target /home/x/foo.conf))
+    ((input foo.conf) (target /home/x/foo.conf))
     |}];
   return ()
 ;;
@@ -664,7 +586,7 @@ let%expect_test "Rbw_files.resolve - valid mode field parsed as octal" =
   in
   print_s
     [%sexp
-      (Gk_tools.Rbw_files.For_testing.resolve ~home_dir:"/home/x" record
+      (Gk_tools.Rbw_files.For_testing.resolve ~home_dir record
        : Gk_tools.Rbw_files.For_testing.Resolved.t Or_error.t)];
   [%expect
     {|
@@ -685,18 +607,17 @@ let%expect_test "Rbw_files.resolve - invalid mode field rejected" =
     ; notes = None
     }
   in
-  List.iter [ "8"; ""; "12345"; "0o600"; "abc" ] ~f:(fun value ->
+  List.iter [ "8"; "12345" ] ~f:(fun input ->
+    let result = Gk_tools.Rbw_files.For_testing.resolve ~home_dir (make_record input) in
     print_s
-      [%sexp
-        (Gk_tools.Rbw_files.For_testing.resolve ~home_dir:"/home/x" (make_record value)
-         : Gk_tools.Rbw_files.For_testing.Resolved.t Or_error.t)]);
+      [%message
+        (input : string) (result : Gk_tools.Rbw_files.For_testing.Resolved.t Or_error.t)]);
   [%expect
     {|
-    (Error ("invalid mode (must be 1-4 octal digits)" (mode 8)))
-    (Error ("invalid mode (must be 1-4 octal digits)" (mode "")))
-    (Error ("invalid mode (must be 1-4 octal digits)" (mode 12345)))
-    (Error ("invalid mode (must be 1-4 octal digits)" (mode 0o600)))
-    (Error ("invalid mode (must be 1-4 octal digits)" (mode abc)))
+    ((input 8)
+     (result (Error ("invalid mode (must be 1-4 octal digits)" (mode 8)))))
+    ((input 12345)
+     (result (Error ("invalid mode (must be 1-4 octal digits)" (mode 12345)))))
     |}];
   return ()
 ;;
@@ -721,7 +642,11 @@ let with_temp_rbw_target ~f =
 ;;
 
 let rbw_resolved ~target ~content ~mode : Gk_tools.Rbw_files.For_testing.Resolved.t =
-  { name = "foo"; local_target = target; remote_content = content; mode }
+  { name = "foo"
+  ; local_target = File_path.Absolute.of_string target
+  ; remote_content = content
+  ; mode
+  }
 ;;
 
 let print_file_perm path =

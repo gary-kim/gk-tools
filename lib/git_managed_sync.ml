@@ -6,7 +6,10 @@ module Repo = Config.Git_managed_sync_settings.Repo
 let config_overrides = [ "-c"; "commit.gpgsign=false" ]
 
 let git ~dir args =
-  Logged_process.run ~prog:"git" ~args:(config_overrides @ ("-C" :: dir :: args)) ()
+  Logged_process.run
+    ~prog:"git"
+    ~args:(config_overrides @ ("-C" :: File_path.to_string dir :: args))
+    ()
 ;;
 
 let has_changes ~dir =
@@ -35,7 +38,7 @@ let rebase_in_progress ~dir =
 let commit_all ~dir ~message =
   let%bind (_ : string) = git ~dir [ "add"; "--all" ] in
   let%map (_ : string) = git ~dir [ "commit"; "--message"; message ] in
-  [%log.info "committed" (dir : string) (message : string)]
+  [%log.info "committed" (dir : File_path.t) (message : string)]
 ;;
 
 let pull_rebase ~dir = git ~dir [ "pull"; "--rebase" ] |> Deferred.Or_error.ignore_m
@@ -59,7 +62,7 @@ let print_outgoing_diff ~dir =
 ;;
 
 let sync ~dir ~yes ~message =
-  [%log.info "syncing" (dir : string)];
+  [%log.info "syncing" (dir : File_path.t)];
   let%bind () =
     match%bind conflicted_paths ~dir with
     | [] -> return ()
@@ -67,7 +70,7 @@ let sync ~dir ~yes ~message =
       Deferred.Or_error.error_s
         [%message
           "refusing to sync: unresolved merge conflicts"
-            (dir : string)
+            (dir : File_path.t)
             (paths : string list)]
   in
   let%bind () =
@@ -75,19 +78,19 @@ let sync ~dir ~yes ~message =
     | false -> return ()
     | true ->
       Deferred.Or_error.error_s
-        [%message "refusing to sync: rebase in progress" (dir : string)]
+        [%message "refusing to sync: rebase in progress" (dir : File_path.t)]
   in
   let%bind () =
     match%bind has_changes ~dir with
     | true -> commit_all ~dir ~message
     | false ->
-      [%log.info "nothing to commit" (dir : string)];
+      [%log.info "nothing to commit" (dir : File_path.t)];
       return ()
   in
   let%bind () = pull_rebase ~dir in
   match%bind outgoing_commit_count ~dir with
   | 0 ->
-    [%log.info "nothing to push" (dir : string)];
+    [%log.info "nothing to push" (dir : File_path.t)];
     return ()
   | count ->
     let%bind () = print_outgoing_diff ~dir in
@@ -102,7 +105,7 @@ let sync ~dir ~yes ~message =
           Deferred.Or_error.try_with ~extract_exn:true (fun () ->
             Async_interactive.ask_yn
               ~default:false
-              [%string "Push %{count#Int} commit(s) to %{dir}?"])
+              [%string "Push %{count#Int} commit(s) to %{dir#File_path}?"])
         | _ ->
           Deferred.Or_error.error_s
             [%message
@@ -111,9 +114,9 @@ let sync ~dir ~yes ~message =
     if confirmed
     then (
       let%map (_ : string) = git ~dir [ "push" ] in
-      [%log.info "pushed" (dir : string) (count : int)])
+      [%log.info "pushed" (dir : File_path.t) (count : int)])
     else (
-      [%log.info "push skipped" (dir : string)];
+      [%log.info "push skipped" (dir : File_path.t)];
       return ())
 ;;
 
@@ -121,24 +124,18 @@ let sync_all ~dirs ~yes ~message =
   Nonempty_list.to_list dirs
   |> Deferred.List.map ~how:`Sequential ~f:(fun dir ->
     sync ~dir ~yes ~message
-    |> Deferred.Or_error.tag_s ~tag:[%message "sync failed" (dir : string)])
+    |> Deferred.Or_error.tag_s ~tag:[%message "sync failed" (dir : File_path.t)])
   |> Deferred.map ~f:Or_error.combine_errors_unit
 ;;
 
 let expand_home path =
-  let open Or_error.Let_syntax in
-  let%bind () =
-    Result.ok_if_true
-      (not (String.is_empty path))
-      ~error:(Error.of_lazy_sexp [%lazy_message "repo dir may not be empty"])
-  in
-  match Home_path.chop_tilde path with
+  match Option.bind (File_path.to_relative path) ~f:Home_path.chop_tilde with
   | None -> Ok path
   | Some rest ->
-    Sys.getenv "HOME"
-    |> Or_error.of_option_lazy_sexp
-         ~error:[%lazy_message "cannot expand path: $HOME not set" (path : string)]
-    |> Or_error.map ~f:(fun home -> Home_path.under_home ~home ~rest)
+    Home_path.from_env ()
+    |> Or_error.tag_s ~tag:[%message "cannot expand path" (path : File_path.t)]
+    |> Or_error.map ~f:(fun home ->
+      File_path.of_absolute (Home_path.under_home ~home ~rest))
 ;;
 
 let expand_home_all paths =
@@ -183,7 +180,10 @@ let command =
      and dirs =
        flag
          "dir"
-         (optional (Nonempty_list.comma_separated_argtype ~strip_whitespace:true string))
+         (optional
+            (Nonempty_list.comma_separated_argtype
+               ~strip_whitespace:true
+               File_path.arg_type))
          ~doc:"DIRS comma-separated repo directories to sync"
      and yes = flag "yes" no_arg ~doc:" skip the push confirmation prompt"
      and message =

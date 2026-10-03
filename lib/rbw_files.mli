@@ -6,18 +6,21 @@ module For_testing : sig
   module Resolved : sig
     type t =
       { name : string
-      ; local_target : string
+      ; local_target : File_path.Absolute.t
       ; remote_content : string
       ; mode : int option
       }
     [@@deriving sexp_of]
   end
 
-  val resolve_target : home_dir:string -> string -> string
+  val resolve_target
+    :  home_dir:File_path.Absolute.t
+    -> File_path.t
+    -> File_path.Absolute.t
 
   val resolve
     :  ?strict:bool
-    -> home_dir:string
+    -> home_dir:File_path.Absolute.t
     -> Rbw_cli.Record.t
     -> Resolved.t Or_error.t
 

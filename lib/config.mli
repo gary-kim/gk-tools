@@ -15,7 +15,7 @@ module Git_managed_sync_settings : sig
   module Repo : sig
     type t =
       { id : string
-      ; dir : string
+      ; dir : File_path.t
       }
     [@@deriving sexp]
   end

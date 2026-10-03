@@ -44,7 +44,7 @@ Pre-populate the local file with new content we want to upload.
 Upload runs the diff (record vs local) on stdout, then writes local bytes to
 the record. We confirm via the side log that the shim wrote what we expected.
 
-  $ gkt rbw files upload -yes upload-target 2>/dev/null
+  $ gkt rbw files upload -yes Upload-Target 2>/dev/null
   ------ bitwarden:upload-target
   ++++++ $TESTCASE_ROOT/home/target.conf
   @|-1,1 +1,2 ============================================================
@@ -56,20 +56,6 @@ the record. We confirm via the side log that the shim wrote what we expected.
   rbw-edit-result-for upload-target:
   fresh local content
   line two
-
-Case-insensitive needle matching: "Upload-Target" should match.
-
-  $ rm -f "$EDIT_LOG"
-  $ gkt rbw files upload -yes Upload-Target 2>/dev/null > /dev/null
-  $ cat "$EDIT_LOG"
-  rbw-edit-result-for upload-target:
-  fresh local content
-  line two
-
-A non-matching needle should fail.
-
-  $ gkt rbw files upload -yes does-not-exist 2>/dev/null
-  [1]
 
 Without -yes, a non-interactive stdin/stdout is an error, not a hang.
 

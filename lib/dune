@@ -12,7 +12,7 @@
   cohttp
   cohttp-async
   file_path
-  filesystem.async
+  filesystem.core
   jsonaf
   re
   uri

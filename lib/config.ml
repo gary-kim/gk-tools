@@ -15,7 +15,7 @@ module Git_managed_sync_settings = struct
   module Repo = struct
     type t =
       { id : string
-      ; dir : string
+      ; dir : File_path.t
       }
     [@@deriving sexp]
   end
