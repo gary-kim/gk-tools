@@ -36,4 +36,5 @@
   jsonaf
   ppx_jsonaf_conv
   async_interactive
+  email_message
   (ocamlformat :with-dev-setup)))

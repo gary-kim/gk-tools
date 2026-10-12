@@ -1,7 +1,18 @@
 (library
  (name test_gk_tools)
- (libraries gk_tools core core_unix async file_path filesystem.async jsonaf)
+ (libraries
+  gk_tools
+  core
+  core_unix
+  async
+  cohttp
+  cohttp-async
+  file_path
+  filesystem.async
+  jsonaf
+  re)
  (inline_tests
+  (deps ../bin/main.exe)
   (flags
    ;; TODO: Remove once ppx_expect is fixed in oxcaml
    (:standard -source-tree-root .)))

@@ -1,7 +1,6 @@
 open! Core
 open! Async
 open Deferred.Or_error.Let_syntax
-module Repo = Config.Git_managed_sync_settings.Repo
 
 let config_overrides = [ "-c"; "commit.gpgsign=false" ]
 
@@ -144,7 +143,7 @@ let expand_home_all paths =
 
 let resolve_ids ~repos ids =
   Nonempty_list.map ids ~f:(fun id ->
-    List.find_map repos ~f:(fun (repo : Repo.t) ->
+    List.find_map repos ~f:(fun (repo : Config.Git_managed_sync_settings.Repo.t) ->
       Option.some_if (String.equal repo.id id) repo.dir)
     |> Or_error.of_option_lazy_sexp ~error:[%lazy_message "unknown repo id" (id : string)])
   |> Nonempty_list.combine_or_errors
@@ -159,7 +158,7 @@ let configured_repos () =
          ~f:(fun ({ repos } : Config.Git_managed_sync_settings.t) -> repos)
   in
   let%map () =
-    List.map repos ~f:(fun (repo : Repo.t) -> repo.id)
+    List.map repos ~f:(fun (repo : Config.Git_managed_sync_settings.Repo.t) -> repo.id)
     |> List.find_a_dup ~compare:String.compare
     |> Option.value_map ~default:(Or_error.return ()) ~f:(fun id ->
       Or_error.error_s [%message "duplicate repo id in config" (id : string)])
@@ -198,7 +197,8 @@ let command =
        let%bind dirs =
          (match ids, dirs with
           | None, None ->
-            List.map repos ~f:(fun (repo : Repo.t) -> repo.dir)
+            List.map repos ~f:(fun (repo : Config.Git_managed_sync_settings.Repo.t) ->
+              repo.dir)
             |> Nonempty_list.of_list
             |> Or_error.of_option_lazy_sexp
                  ~error:
