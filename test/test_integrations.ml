@@ -155,7 +155,7 @@ esac
       ; "TOKEN_CALLS", dir ^/ "token-calls"
       ]
     in
-    let args = [ "misc"; "classify-mail"; "-folder"; "INBOX"; "-file"; source ] in
+    let args = [ "misc"; "classify-mail"; "-folder"; "INBOX"; "-file"; source; "-yes" ] in
     let answer = ref (Answer.Folder "Receipts") in
     let actual_auth = ref None in
     let received = ref [] in
@@ -284,6 +284,89 @@ esac
           (args @ [ "-dry-run"; "-log-level"; "Error" ])
       in
       print_logs ~tmp_dir:dir output;
+      let oversized =
+        [%string
+          "From oversized@example.com Thu Jan 1 00:00:00 2026\n\
+           Subject: oversized\n\
+           Message-ID: <oversized@example.com>\n\n\
+           %{String.make 100_000 'x'}\n"]
+      in
+      let calls_before = List.length !received in
+      answer := Folder "Receipts";
+      let%bind output =
+        run
+          [%string
+            "%{oversized}From sender@example.com Thu Jan 1 00:00:00 2026\n%{email}"]
+          (args @ [ "-log-level"; "Error" ])
+      in
+      ignore (success_exn output : string);
+      print_logs ~tmp_dir:dir output;
+      let%bind moved = Reader.file_contents destination in
+      print_s
+        [%message
+          "mixed batch"
+            ~model_calls:(List.length !received - calls_before : int)
+            ~mail_preserved:(String.equal moved email : bool)];
+      let%bind () = Unix.rename ~src:destination ~dst:source
+      and () = Unix.unlink calls in
+      let multipart =
+        [%string
+          "Subject: =?UTF-8?B?SW52b2ljZQ==?=\n\
+           \t=?UTF-8?Q?_=C2=AE?=\n\
+           Message-ID: <invoice@example.com>\n\
+           MIME-Version: 1.0\n\
+           Content-Type: multipart/mixed; boundary=mixed\n\n\
+           --mixed\n\
+           Content-Type: multipart/alternative; boundary=alternative\n\n\
+           --alternative\n\
+           Content-Type: text / plain (body); charset=UTF-8\n\
+           Content-Transfer-Encoding: quoted-printable\n\n\
+           Invoice =C2=AE due.\n\
+           --alternative\n\
+           Content-Type: text/html; charset=UTF-8\n\
+           Content-Transfer-Encoding: base64\n\n\
+           PGI+SW52b2ljZTwvYj4=\n\
+           --alternative--\n\
+           --mixed\n\
+           Content-Type: application/pdf; name=invoice.pdf\n\
+           Content-Disposition: attachment; filename=invoice.pdf\n\
+           Content-Transfer-Encoding: base64\n\n\
+           %{String.make 200_000 'A'}\n\
+           --mixed\n\
+           Content-Type: text/plain; name=notes.txt\n\
+           Content-Disposition: attachment; filename=notes.txt\n\n\
+           This attached text is not part of the inline body.\n\
+           --mixed\n\
+           Content-Type: multipart/digest; boundary=digest\n\n\
+           --digest\n\n\
+           Subject: encapsulated\n\
+           Content-Type: multipart/mixed; boundary=inner\n\n\
+           --inner\n\
+           Content-Type: application/pdf\n\
+           Content-Disposition: attachment; filename=inner.pdf\n\
+           Content-Transfer-Encoding: base64\n\n\
+           %{String.make 200_000 'B'}\n\
+           --inner--\n\
+           --digest--\n\
+           --mixed--\n"]
+      in
+      let%bind output = run multipart (args @ [ "-dry-run" ]) in
+      ignore (success_exn output : string);
+      print_s [%sexp (List.hd !received : string option)];
+      let calls_before = List.length !received in
+      let%bind output =
+        run
+          (String.substr_replace_all
+             multipart
+             ~pattern:"text / plain (body)"
+             ~with_:"text/plain/invalid")
+          (args @ [ "-dry-run" ])
+      in
+      print_s
+        [%message
+          "malformed MIME"
+            ~rejected:(Result.is_error output.exit_status : bool)
+            ~model_calls:(List.length !received - calls_before : int)];
       let%bind output = run [%string "%{email}caf\233\n"] (args @ [ "-dry-run" ]) in
       ignore (success_exn output : string);
       print_s
@@ -409,8 +492,7 @@ let%expect_test "gateway classification, dry run, and token sources" =
         ((completed 1) (total 2)
          (classification
           ((subject (invoice)) (message_id (invoice@example.com))
-           (target_folder (Receipts)) (reason "Test model classification.")))
-         (moved false) (reasoning ()))))
+           (target_folder (Receipts)) (reason "Test model classification."))))))
       (tags ())))
     (V2
      ((time (<time>)) (level (Info))
@@ -419,11 +501,27 @@ let%expect_test "gateway classification, dry run, and token sources" =
         ((completed 2) (total 2)
          (classification
           ((subject (second)) (message_id (second@example.com))
-           (target_folder ()) (reason "Test model classification.")))
-         (moved false) (reasoning ()))))
+           (target_folder ()) (reason "Test model classification."))))))
       (tags ())))
     ("dry run" (notmuch_called false))
-    ("email is too large to classify" (bytes 100142) (max_message_bytes 100000))
+    ("email text is too large to classify" (subject (invoice))
+     (message_id (invoice@example.com)) (bytes 100142)
+     (max_message_bytes 100000))
+    ("mixed batch" (model_calls 1) (mail_preserved true))
+    ( "Subject: =?UTF-8?B?SW52b2ljZQ==?=\
+     \n\t=?UTF-8?Q?_=C2=AE?=\
+     \nMessage-ID: <invoice@example.com>\
+     \nMIME-Version: 1.0\
+     \nContent-Type: multipart/mixed; boundary=mixed\
+     \n\
+     \nInvoice \194\174 due.\
+     \n\
+     \n<b>Invoice</b>\
+     \n\
+     \nAttachment (contents omitted): invoice.pdf; application/pdf; name=invoice.pdf\
+     \n\
+     \nAttachment (contents omitted): notes.txt; text/plain; name=notes.txt")
+    ("malformed MIME" (rejected true) (model_calls 0))
     ("invalid UTF-8" (normalized true))
     ((token_calls x) (authorization ("Bearer test-secret")))
     |}];

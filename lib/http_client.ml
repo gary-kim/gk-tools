@@ -3,6 +3,12 @@ open! Async
 open Deferred.Or_error.Let_syntax
 
 let request ~meth ~url ~headers ~body ~timeout =
+  [%log.debug
+    "HTTP request"
+      (meth : Cohttp.Code.meth)
+      ~url:(Uri.to_string url : string)
+      ~headers:(Cohttp.Header.to_list headers : (string * string) list)
+      (body : string)];
   let request =
     Deferred.Or_error.try_with ~extract_exn:true (fun () ->
       match meth with
@@ -32,7 +38,13 @@ let request ~meth ~url ~headers ~body ~timeout =
         [%message "HTTP request timed out" (timeout : Time_ns.Span.t)]
   in
   let status_code = Cohttp.Code.code_of_status (Cohttp.Response.status response) in
-  [%log.debug "HTTP response" (status_code : int)];
+  [%log.debug
+    "HTTP response"
+      (status_code : int)
+      ~headers:
+        (Cohttp.Header.to_list (Cohttp.Response.headers response)
+         : (string * string) list)
+      (body : string)];
   if Int.between status_code ~low:200 ~high:299
   then return body
   else

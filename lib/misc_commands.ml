@@ -2,7 +2,7 @@ open! Core
 
 let command =
   Command.group
-    ~summary:"Miscellaneous non-interactive commands"
+    ~summary:"Miscellaneous commands"
     [ "classify-mail", Classify_mail.command
     ; ( "claude"
       , Command.group

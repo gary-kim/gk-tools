@@ -59,7 +59,7 @@ module Message = struct
   end
 
   type t =
-    { raw : string
+    { content : String.Utf8.t
     ; subject : string option
     ; message_id : string option
     }
@@ -87,21 +87,110 @@ module Message = struct
   ;;
 
   let of_raw raw =
-    let%map.Or_error () =
+    let headers = unfolded_headers raw in
+    let subject =
+      header headers ~name:"Subject"
+      |> Option.map ~f:(fun subject ->
+        Email_message_kernel.Headers.Encoded_word.decode
+          ~charsets:[ `Utf8; `Ascii ]
+          subject
+        |> Result.ok
+        |> Option.value ~default:subject)
+    in
+    let message_id =
+      header headers ~name:"Message-ID" |> Option.map ~f:Message_id.of_header
+    in
+    let rec sections ?container_headers email =
+      let open Or_error.Let_syntax in
+      let module Email = Email_message_kernel in
+      let module Media_type = Email.Private.Media_type in
+      let headers = Email.headers email in
+      let parent = Option.bind container_headers ~f:Media_type.from_headers in
+      let%bind media_type =
+        Option.value_map
+          (Email.Headers.last headers "Content-Type")
+          ~default:(Ok (Media_type.default ?parent ()))
+          ~f:(fun content_type ->
+            Media_type.from_headers headers
+            |> Or_error.of_option_lazy_sexp
+                 ~error:[%lazy_message "invalid Content-Type" (content_type : string)])
+      in
+      let content_type =
+        Email.Headers.last headers "Content-Type"
+        |> Option.value
+             ~default:
+               [%string
+                 "%{Media_type.mime_type media_type}/%{Media_type.mime_subtype \
+                  media_type}"]
+      in
+      let is_text =
+        Media_type.is_text media_type
+        && List.mem
+             [ "plain"; "html" ]
+             (Media_type.mime_subtype media_type)
+             ~equal:String.Caseless.equal
+      in
+      match
+        Email_message_kernel.Simple.Content.content_disposition
+          (Email_message_kernel.Simple.Content.of_email email)
+      with
+      | `Attachment name ->
+        [%log.debug "omitting attachment content" (name : string) (content_type : string)];
+        Ok [ [%string "Attachment (contents omitted): %{name}; %{content_type}"] ]
+      | `Inline when (not is_text) && not (Media_type.is_multipart media_type) -> Ok []
+      | `Inline ->
+        let%bind content = Email_message_kernel.Content.parse ?container_headers email in
+        (match content with
+         | Multipart { parts; container_headers; _ } ->
+           List.map parts ~f:(sections ~container_headers)
+           |> Or_error.all
+           |> Or_error.map ~f:List.concat
+         | Message _ -> Ok []
+         | Data data ->
+           if is_text
+           then
+             Email_message_kernel.Octet_stream.decode data
+             |> Or_error.of_option ~error:(Error.of_string "could not decode email text")
+             |> Or_error.map ~f:(fun body ->
+               [ Email_message_kernel.Bigstring_shared.to_string body ])
+           else Ok [])
+    in
+    let open Or_error.Let_syntax in
+    let%bind body =
+      Or_error.try_with_join (fun () -> Email_message_kernel.of_string raw |> sections)
+      |> Or_error.tag_s
+           ~tag:
+             [%message
+               "could not prepare email"
+                 (subject : string option)
+                 (message_id : string option)]
+    in
+    let raw_headers =
+      String.split_lines raw
+      |> List.take_while ~f:(Fn.non String.is_empty)
+      |> String.concat ~sep:"\n"
+    in
+    let body = String.concat body ~sep:"\n\n" in
+    let content = String.Utf8.sanitize [%string "%{raw_headers}\n\n%{body}"] in
+    [%log.debug
+      "prepared email"
+        (subject : string option)
+        (message_id : string option)
+        ~raw_bytes:(String.length raw : int)
+        ~prepared_bytes:(String.length (String.Utf8.to_string content) : int)];
+    let%map () =
       Result.ok_if_true
-        (String.length raw <= max_message_bytes)
+        (String.length (String.Utf8.to_string content) <= max_message_bytes)
         ~error:
           (Error.create_s
              [%message
-               "email is too large to classify"
-                 ~bytes:(String.length raw : int)
+               "email text is too large to classify"
+                 (subject : string option)
+                 (message_id : string option)
+                 ~bytes:(String.length (String.Utf8.to_string content) : int)
                  (max_message_bytes : int)])
     in
-    let headers = unfolded_headers raw in
-    { raw
-    ; subject = header headers ~name:"Subject"
-    ; message_id = header headers ~name:"Message-ID" |> Option.map ~f:Message_id.of_header
-    }
+    { content; subject; message_id }
   ;;
 
   let list_of_pipe input =
@@ -112,16 +201,6 @@ module Message = struct
      else [ input ])
     |> List.map ~f:of_raw
   ;;
-end
-
-module Classification = struct
-  type t =
-    { subject : string option
-    ; message_id : string option
-    ; target_folder : File_path.Relative.t option
-    ; reason : String.Utf8.t
-    }
-  [@@deriving sexp_of]
 end
 
 module Target = struct
@@ -138,8 +217,7 @@ module Decision = struct
   end
 
   type t =
-    { reasoning : String.Utf8.t list
-    ; target : Target.t
+    { target : Target.t
     ; reason : Utf8.t
     }
   [@@deriving sexp_of]
@@ -170,16 +248,29 @@ module Decision = struct
              ~error:[%lazy_message "LLM returned an unknown folder" (name : string)]
         |> Or_error.map ~f:(fun destination -> Target.Folder destination.folder))
     in
-    { reasoning = response.reasoning; target; reason = wire.reason }
+    { target; reason = wire.reason }
   ;;
 end
 
-module Outcome = struct
+module Classification = struct
   type t =
-    { decision : Decision.t
-    ; moved : bool
+    { subject : string option
+    ; message_id : string option
+    ; target_folder : File_path.Relative.t option
+    ; reason : String.Utf8.t
     }
   [@@deriving sexp_of]
+
+  let of_decision ~subject ~message_id (decision : Decision.t) =
+    { subject
+    ; message_id
+    ; target_folder =
+        (match decision.target with
+         | No_match -> None
+         | Folder folder -> Some folder)
+    ; reason = decision.reason
+    }
+  ;;
 end
 
 module Maildir = struct
@@ -299,7 +390,7 @@ let classify ~llm ~(settings : Config.Classify_mail_settings.t) (message : Messa
     Llm_completions.complete
       llm
       ~instructions:(system_prompt settings)
-      [ { role = User; content = String.Utf8.sanitize message.raw } ]
+      [ { role = User; content = message.content } ]
   in
   Decision.of_response ~destinations:settings.destinations response |> Deferred.return
 ;;
@@ -325,20 +416,6 @@ let move_to ~root ~folder ~destination_folder (message : Message.t) =
     ~f:(Maildir.move ~destination_dir:(File_path.Absolute.append root destination_folder))
 ;;
 
-let classify_and_move ~llm ~settings ~root ~folder ~dry_run message =
-  let%bind decision = classify ~llm ~settings message in
-  let%map moved =
-    match decision.target with
-    | No_match -> return false
-    | Folder destination_folder
-      when dry_run || File_path.Relative.equal destination_folder folder -> return false
-    | Folder destination_folder ->
-      let%map () = move_to ~root ~folder ~destination_folder message in
-      true
-  in
-  { Outcome.decision; moved }
-;;
-
 let report ~completed ~total (message : Message.t Or_error.t) result =
   let subject, message_id =
     Option.value_map
@@ -355,55 +432,118 @@ let report ~completed ~total (message : Message.t Or_error.t) result =
         (subject : string option)
         (message_id : string option)
         (error : Error.t)]
-  | Ok ({ decision; moved } : Outcome.t) ->
-    let classification =
-      { Classification.subject
-      ; message_id
-      ; target_folder =
-          (match decision.target with
-           | No_match -> None
-           | Folder folder -> Some folder)
-      ; reason = decision.reason
-      }
-    in
-    [%log.info
-      ""
-        (completed : int)
-        (total : int)
-        (classification : Classification.t)
-        (moved : bool)
-        ~reasoning:(decision.reasoning : String.Utf8.t list)]
+  | Ok (decision : Decision.t) ->
+    let classification = Classification.of_decision ~subject ~message_id decision in
+    [%log.info "" (completed : int) (total : int) (classification : Classification.t)]
 ;;
 
-let run ~folder ~files ~max_concurrent_jobs ~dry_run =
+let confirm_moves ~yes count =
+  Confirm.ask
+    ~yes
+    ~prompt:[%string "Move %{count#Int} message(s) to the proposed folders?"]
+;;
+
+let run ~folder ~files ~max_concurrent_jobs ~dry_run ~yes ~pager =
   Log.Global.set_output [ Log.Output.stderr ~format:`Sexp_hum () ];
   let%bind root = Maildir.account_root ~folder ~files |> Deferred.return in
   let%bind settings, llm = configured_settings ()
   and input =
     Deferred.Or_error.try_with ~extract_exn:true (fun () ->
-      Reader.contents (force Reader.stdin))
+      let chunks, writer = Pipe.create () in
+      (* [Reader.contents] closes stdin, which the pager needs to inherit. *)
+      let%map.Deferred () =
+        Monitor.protect
+          (fun () -> Reader.transfer (force Reader.stdin) writer)
+          ~finally:(fun () ->
+            Pipe.close writer;
+            Deferred.unit)
+      and input = Pipe.to_list chunks in
+      String.concat input)
   in
   let messages = Message.list_of_pipe input in
   let total = List.length messages in
   let completed = ref 0 in
   [%log.info "classifying mail" (dry_run : bool) ~messages:(total : int)];
-  Deferred.Or_error.List.iter
-    messages
-    ~how:(`Max_concurrent_jobs (Max_concurrent_jobs.raw max_concurrent_jobs))
-    ~f:(fun message ->
-      let%map.Deferred result =
-        let%bind message = Deferred.return message in
-        classify_and_move ~llm ~settings ~root ~folder ~dry_run message
-      in
-      Int.incr completed;
-      report ~completed:!completed ~total message result;
-      Or_error.ignore_m result)
+  let%bind.Deferred results =
+    Deferred.List.map
+      messages
+      ~how:(`Max_concurrent_jobs (Max_concurrent_jobs.raw max_concurrent_jobs))
+      ~f:(fun message ->
+        let%map.Deferred result =
+          let%bind message = Deferred.return message in
+          classify ~llm ~settings message
+        in
+        Int.incr completed;
+        report ~completed:!completed ~total message result;
+        message, result)
+  in
+  let moves =
+    List.filter_map results ~f:(fun (message, result) ->
+      let%bind.Option message = Result.ok message in
+      let%bind.Option (decision : Decision.t) = Result.ok result in
+      match decision.target with
+      | No_match -> None
+      | Folder destination_folder ->
+        Option.some_if
+          (not (File_path.Relative.equal destination_folder folder))
+          (message, destination_folder))
+  in
+  [%log.debug
+    "planned moves"
+      ~moves:
+        (List.map moves ~f:(fun (message, destination) -> message.message_id, destination)
+         : (string option * File_path.Relative.t) list)];
+  let%bind.Deferred () = Log.Global.flushed () in
+  let%bind () =
+    Deferred.Or_error.try_with ~extract_exn:true (fun () ->
+      List.map results ~f:(fun (message, result) ->
+        let classification =
+          let%bind.Or_error (message : Message.t) = message in
+          let%map.Or_error (decision : Decision.t) = result in
+          Classification.of_decision
+            ~subject:message.subject
+            ~message_id:message.message_id
+            decision
+        in
+        [%sexp (classification : Classification.t Or_error.t)])
+      |> [%sexp_of: Sexp.t list]
+      |> Sexp.to_string_hum
+      |> Async_interactive.show_string_with_pager ~pager)
+  in
+  let%bind approved =
+    if dry_run || List.is_empty moves
+    then return false
+    else confirm_moves ~yes (List.length moves)
+  in
+  let%map.Deferred move_results =
+    if not approved
+    then Deferred.return []
+    else
+      Deferred.List.map moves ~how:`Sequential ~f:(fun (message, destination_folder) ->
+        let%map.Deferred result = move_to ~root ~folder ~destination_folder message in
+        Result.iter_error result ~f:(fun error ->
+          [%log.info
+            "move failed"
+              ~subject:(message.subject : string option)
+              (destination_folder : File_path.Relative.t)
+              (error : Error.t)]);
+        result)
+  in
+  if approved
+  then
+    [%log.info "moves completed" ~moved:(List.count move_results ~f:Result.is_ok : int)];
+  let classification_result =
+    match results with
+    | [] -> Ok ()
+    | _ -> Or_error.find_map_ok results ~f:snd |> Or_error.ignore_m
+  in
+  classification_result :: move_results |> Or_error.combine_errors_unit
 ;;
 
 let command =
   Command.async_or_error
     ~extract_exn:true
-    ~summary:"Classify piped emails with an LLM and move them to configured folders"
+    ~summary:"Classify piped emails and confirm before moving them to configured folders"
     (let%map_open.Command folder =
        flag
          "folder"
@@ -418,14 +558,22 @@ let command =
                ~f:Filesystem_core.make_absolute_under_cwd))
          ~doc:"FILE a file of the selected email (repeat for each of its files)"
      and max_concurrent_jobs =
-       flag
+       flag_optional_with_default_doc_sexp
          "jobs"
-         (optional_with_default
-            (Max_concurrent_jobs.create_exn 8)
-            (Command.Arg_type.map int ~f:Max_concurrent_jobs.create_exn))
-         ~doc:"N classify up to N emails at once (default: 8)"
+         (Command.Arg_type.map int ~f:Max_concurrent_jobs.create_exn)
+         [%sexp_of: Max_concurrent_jobs.t]
+         ~default:(Max_concurrent_jobs.create_exn 8)
+         ~doc:"N classify up to N emails at once"
      and dry_run =
        flag "dry-run" no_arg ~doc:" classify without moving; log decisions and progress"
+     and yes = Confirm.yes_param
+     and pager =
+       flag_optional_with_default_doc_string
+         "pager"
+         string
+         Fn.id
+         ~default:"less -R"
+         ~doc:"COMMAND pager for reviewing classifications"
      and () = Log.Global.set_level_via_param () in
-     fun () -> run ~folder ~files ~max_concurrent_jobs ~dry_run)
+     fun () -> run ~folder ~files ~max_concurrent_jobs ~dry_run ~yes ~pager)
 ;;
