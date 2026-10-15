@@ -147,9 +147,8 @@ let exec_command =
                ~unique_values:true
                name_arg_type))
          ~doc:"NAMES comma-separated env var names to inject, e.g. FOO,BAR"
-     (* TODO: use [escape_with_autocomplete] with [compgen -c] for the program slot and
-        [compgen -f] for subsequent args so the post-[--] command and its args
-        tab-complete. *)
+     (* TODO: Use [escape_with_autocomplete] with [compgen -c] for the program and
+        [compgen -f] for subsequent arguments. *)
      and command = flag "--" escape ~doc:"COMMAND command and arguments to run" in
      fun () ->
        let%bind names = Deferred.return (validate_names environment) in

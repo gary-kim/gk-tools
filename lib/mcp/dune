@@ -1,0 +1,6 @@
+(library
+ (name mcp)
+ (public_name gk-tools.mcp)
+ (libraries core async jsonaf)
+ (preprocess
+  (pps ppx_jane ppx_jsonaf_conv)))

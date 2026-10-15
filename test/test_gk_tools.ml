@@ -125,9 +125,8 @@ let%expect_test "parse - missing VERSION and PRODID" =
   return ()
 ;;
 
-(* TODO: the tests below this point were added to verify the line-folding / parser rewrite
-   preserves behavior. Once the rewrite settles, prune the redundant ones — we don't need
-   every edge case covered forever. *)
+(* TODO: Once the line-folding/parser rewrite settles, prune redundant edge-case tests
+   below. *)
 
 let%expect_test "parse - chain of folded continuations" =
   let data =

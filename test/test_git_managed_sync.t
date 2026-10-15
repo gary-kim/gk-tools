@@ -1,6 +1,5 @@
-Set up an isolated git environment. The scratch global gitconfig deliberately
-enables commit signing with a broken gpg program: any commit that does not
-bypass signing fails, proving managed-sync commits unsigned.
+Set up an isolated git environment with commit signing enabled via [/bin/false]
+to verify managed-sync bypasses signing.
 
   $ set -o pipefail
   $ export HOME="$PWD/home"
@@ -48,9 +47,7 @@ pushes.
   gkt: auto managed sync
   init
 
-The tool never writes to the repo-local config; unsigned commits and rebased
-pulls come entirely from the [-c] overrides on its own git invocations, so a
-plain git commit here still trips the signing gitconfig.
+managed-sync uses [-c] overrides rather than writing to the repo-local config.
 
   $ git -C work config --local commit.gpgsign
   [1]
@@ -91,15 +88,14 @@ stays linear and the outgoing diff shows only the local commit.
   gkt: auto managed sync
   init
 
-Without arguments and without configuration, the command refuses to guess.
+Without arguments or configured repos, the command errors.
 
   $ gkt git managed-sync -yes 2>&1
   "no repos to sync: pass -id/-dir or set [git_managed_sync repos] in the config"
   [1]
 
-Repos listed in the config sexp are synced in order when no DIR is given;
-~/ expands against $HOME. repo-b is behind origin after repo-a pushes, so its
-sync exercises the rebase path too.
+With no arguments, configured repos are synced in order; [repo-b] rebases onto
+[repo-a]'s push.
 
   $ git clone -q origin.git "$HOME/repo-a"
   $ git clone -q origin.git "$HOME/repo-b"
@@ -143,8 +139,8 @@ A single repo can be selected by its config id.
   $ git --git-dir=origin.git log -1 --format=%s master
   gkt: auto managed sync
 
-An empty [git_managed_sync] section loads fine; only a run with no arguments
-complains. Plain DIR arguments keep working without configured repos.
+An empty [git_managed_sync] section loads, but running with no arguments
+errors.
 
   $ cat > "$XDG_CONFIG_HOME/gk-tools.sexp" << 'EOF'
   > ((git_managed_sync ()))
@@ -153,14 +149,14 @@ complains. Plain DIR arguments keep working without configured repos.
   "no repos to sync: pass -id/-dir or set [git_managed_sync repos] in the config"
   [1]
 
-An id that is not in the config is an error, not a directory fallback.
+An unknown id is an error.
 
   $ gkt git managed-sync -yes -id repo-a 2>&1
   ("unknown repo id" (id repo-a))
   [1]
 
-Without -yes, a non-tty stdin refuses the push after showing the diff (piped
-input is not accepted as confirmation); the local commit is kept.
+Without -yes, a non-tty stdin refuses the push after showing the diff, keeping
+the local commit.
 
   $ echo later > work/i
   $ printf 'n\n' | timeout 10 gkt git managed-sync -dir work 2>&1 | strip_log
@@ -182,8 +178,8 @@ input is not accepted as confirmation); the local commit is kept.
   $ git -C work log --format=%s -1
   gkt: auto managed sync
 
-A repo left mid-rebase by a conflicting pull must not be silently committed
-over on the next run. Seed a tracked file, then diverge two clones on it.
+A repo left mid-rebase by a conflicting pull is not committed over on the next
+run.
 
   $ git clone -q origin.git side-a 2>/dev/null
   $ (cd side-a && echo base > shared && git add shared && git commit -q --no-gpg-sign -m add-shared && git push -q)
@@ -191,15 +187,14 @@ over on the next run. Seed a tracked file, then diverge two clones on it.
   $ (cd side-a && echo aaa > shared && git commit -q --no-gpg-sign -am change-a && git push -q)
   $ (cd side-b && echo bbb > shared && git commit -q --no-gpg-sign -am change-b)
 
-The first sync pulls and hits a rebase conflict, leaving the repo mid-rebase.
+The first sync hits a rebase conflict, leaving the repo mid-rebase.
 
   $ gkt git managed-sync -yes -dir side-b > /dev/null 2>&1; echo "exit: $?"
   exit: 1
   $ git -C side-b status --porcelain
   UU shared
 
-The next run refuses to commit over the unresolved conflict rather than staging
-the markers, and origin is left untouched.
+The next run refuses to sync while conflicts remain unresolved.
 
   $ gkt git managed-sync -yes -dir side-b 2>&1 | strip_log
   Info (syncing(dir side-b))
@@ -210,9 +205,8 @@ the markers, and origin is left untouched.
   $ git --git-dir=origin.git log -1 --format=%s master
   change-a
 
-Staging the resolution without [git rebase --continue] leaves no unmerged
-paths, but the repo is still mid-rebase on a detached HEAD; committing now
-would strand the resolution there, so sync still refuses.
+Staging the resolution without [git rebase --continue] leaves the repo
+mid-rebase, so sync still refuses.
 
   $ (cd side-b && echo resolved > shared && git add shared)
   $ gkt git managed-sync -yes -dir side-b 2>&1 | strip_log

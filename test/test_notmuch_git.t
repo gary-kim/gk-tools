@@ -1,5 +1,4 @@
-Integration test against the real notmuch-git (the dune cram stanza only
-enables this test when notmuch-git is on PATH).
+Integration test against notmuch-git (enabled when notmuch-git is on PATH).
 
   $ set -o pipefail
   $ export HOME="$PWD/home"
@@ -17,9 +16,8 @@ enables this test when notmuch-git is on PATH).
   > EOF
   $ strip_log() { sed -E 's/^[0-9-]+ [0-9:.+Z-]+ //'; }
 
-A tiny notmuch database: two messages, one tagged [work]. safe_fraction is
-raised because any tag change in a two-message database is a "large
-fraction"; real installs keep the default safety check.
+Set up a two-message notmuch database with [safe_fraction=1] so tag changes do
+not trip the default large-change check.
 
   $ export NOTMUCH_CONFIG="$PWD/notmuch-config"
   $ mkdir -p mail
@@ -62,8 +60,7 @@ setup refuses to run without configuration.
   "notmuch-git is not configured: set [notmuch_git remote]"
   [1]
 
-Seed a shared tag repo from this box's current state, standing in for the
-"old" machine.
+Seed a shared tag repo from the current state.
 
   $ git init -q --bare origin.git
   $ NOTMUCH_GIT_DIR="$PWD/seed-repo" notmuch-git -l error init > /dev/null
@@ -71,8 +68,8 @@ Seed a shared tag repo from this box's current state, standing in for the
   $ git --git-dir="$PWD/seed-repo" remote add origin "$PWD/origin.git"
   $ git --git-dir="$PWD/seed-repo" push -q -u origin master
 
-On the "new box": drop the work tag locally, then setup clones the remote and
-force-checkouts the tags back into the database.
+Drop the work tag locally; setup clones the remote and force-checks out the tags
+back into the database.
 
   $ export NOTMUCH_GIT_DIR="$PWD/box-repo"
   $ notmuch tag -work -- id:msg-one@example.com
@@ -100,9 +97,7 @@ the default commit message.
   $ git --git-dir=origin.git log -1 --format=%s master
   gkt: auto notmuch sync
 
-sync also applies remote changes to the local database: another clone adds a
-tag with plain git (the tag repo is just trees of empty files), and after
-sync the local database has it.
+sync also applies remote changes to the local database.
 
   $ git clone -q origin.git remote-change
   $ tagdir=$(dirname "$(find remote-change -type f -name work)")

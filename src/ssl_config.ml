@@ -1,11 +1,8 @@
 open! Core
 open! Async
 
-(* The [verify] callback is an *additional* check run after OpenSSL's chain validation.
-   async_ssl validates the chain by default (verify_modes defaults to [Verify_peer])
-   against the system CA store (set_default_verify_paths, reached because we pass no
-   ca_file/ca_path). OpenSSL does not match the hostname against the cert, so we do that
-   here, failing closed if it doesn't match. *)
+(* [async_ssl] validates the certificate chain against the system CA store by default
+   ([Verify_peer]), but does not check the hostname. *)
 let for_url url =
   Uri.host url
   |> Option.map ~f:(fun hostname ->

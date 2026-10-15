@@ -472,7 +472,7 @@ let%expect_test "gateway classification, dry run, and token sources" =
     (outcome (Malformed {}))
     ("invalid mail classification JSON"
      (Of_jsonaf_error
-      "lib/classify_mail.ml.Decision.Wire.t_of_jsonaf: the following record elements were undefined: target_folder reason"
+      "src/classify_mail.ml.Decision.Wire.t_of_jsonaf: the following record elements were undefined: target_folder reason"
       (Object ())))
     (outcome Incomplete)
     ("LLM did not return a complete text answer" (status Incomplete) (error ())

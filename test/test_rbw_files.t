@@ -5,8 +5,7 @@ Set up an isolated environment with a fake rbw command and a temporary HOME.
   $ export PATH="$PWD/bin:$PATH"
   $ mkdir -p "$HOME" "$PWD/bin"
 
-Fake rbw that emits JSON for SECRET_FILES records. printf is used for the
-JSON to keep escaping sane.
+Fake rbw that emits JSON for SECRET_FILES records.
 
   $ cat > bin/rbw << 'EOF'
   > #!/usr/bin/env bash
@@ -15,14 +14,12 @@ JSON to keep escaping sane.
   > case "$cmd" in
   >   sync) exit 0 ;;
   >   search)
-  >     # Args: --folder SECRET_FILES <term>
   >     echo "SECRET_FILES/match-case"
   >     echo "SECRET_FILES/diff-case"
   >     echo "SECRET_FILES/new-case"
   >     echo "SECRET_FILES/missing-path"
   >     ;;
   >   get)
-  >     # Args: --raw --folder SECRET_FILES RECORD
   >     record="${@: -1}"
   >     case "$record" in
   >       match-case)
@@ -54,12 +51,9 @@ Cat prints Bitwarden contents for a record.
   $ gkt rbw files cat diff-case
   new version
 
-TODO: add coverage for the ambiguous-id branch of [find_record_name_in_list]
-(e.g. two records whose names are case-insensitively equal).
+TODO: Test case-insensitively ambiguous IDs in [find_record_name_in_list].
 
-Check exits non-zero when any local file differs from its Bitwarden record.
-Per-file findings come through async_log on stderr; the missing-filepath
-record causes the iteration to error out.
+Check exits non-zero when a local file differs or a record is invalid.
 
   $ gkt rbw files check |& sed -E 's/^[0-9-]+ [0-9:.+Z-]+ //; s|'"$HOME"'|$HOME|g'
   Info ("file matches"(target $HOME/match.conf))
