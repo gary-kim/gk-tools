@@ -7,6 +7,11 @@ let command =
     ; "git", Gk_tools.Git_commands.command
     ; "misc", Gk_tools.Misc_commands.command
     ; "notmuch", Gk_tools.Notmuch_git.command
+    ; ( "private"
+      , Command.exec
+          ~summary:"Private gk-tools commands"
+          ~path_to_exe:(`Absolute "/usr/libexec/gk-tools/gk-tools-private")
+          () )
     ; "rbw", Gk_tools.Rbw_commands.command
     ]
 ;;
