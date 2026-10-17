@@ -460,6 +460,25 @@ let%expect_test "Rbw_files.resolve - invalid mode field rejected" =
   return ()
 ;;
 
+let%expect_test "secret file IDs validate strings" =
+  let module Id = Gk_tools.Rbw_files.For_testing.Id in
+  List.iter
+    [ "match-case"; "folder/file name"; ""; " match-case"; "match-case "; "-match-case" ]
+    ~f:(fun id ->
+      let valid = Or_error.try_with (fun () -> Id.of_string id) |> Or_error.is_ok in
+      print_s [%message (id : string) (valid : bool)]);
+  [%expect
+    {|
+    ((id match-case) (valid true))
+    ((id "folder/file name") (valid true))
+    ((id "") (valid false))
+    ((id " match-case") (valid false))
+    ((id "match-case ") (valid false))
+    ((id -match-case) (valid false))
+    |}];
+  return ()
+;;
+
 let with_temp_rbw_target ~f =
   let placeholder = Filename_unix.temp_file "rbw_files" "" in
   let dir = placeholder ^ ".d" in

@@ -71,6 +71,10 @@ Check exits non-zero when a local file differs or a record is invalid.
    (errors (("record missing filepath field" (name missing-path)))))
   [1]
 
+An explicit ID only checks that record, ignoring case.
+
+  $ gkt rbw files check MATCH-case 2>/dev/null
+
 Local files should not have been modified.
 
   $ cat "$HOME/match.conf"

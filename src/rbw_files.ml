@@ -5,6 +5,38 @@ open Deferred.Or_error.Let_syntax
 let folder = "SECRET_FILES"
 let default_perm = 0o600
 
+module Id = struct
+  include
+    (val String_id.make
+           ~caller_identity:
+             (Bin_prot.Shape.Uuid.of_string "ba9b535e-c5eb-41e2-a9dd-b68c9171d7ed")
+           ~module_name:"Rbw_files.Id"
+           ~include_pretty_printer:false
+           ~include_default_validation:true
+           ~validate:(fun id ->
+             Result.ok_if_true
+               (not (String.is_prefix id ~prefix:"-"))
+               ~error:
+                 (Error.of_lazy_sexp
+                    [%lazy_message "secret file id may not start with [-]" (id : string)]))
+           ())
+
+  let arg_type =
+    Command.Arg_type.create
+      ~complete:(fun _ ~part ->
+        Thread_safe.block_on_async_exn (fun () ->
+          match%bind.Deferred Rbw_cli.is_unlocked () with
+          | false -> Deferred.return []
+          | true ->
+            (match%map.Deferred Rbw_cli.search ~folder ~term:part with
+             | Error _ -> []
+             | Ok candidates ->
+               List.filter candidates ~f:(fun name ->
+                 String.Caseless.is_prefix name ~prefix:part))))
+      of_string
+  ;;
+end
+
 module Resolved = struct
   type t =
     { name : string
@@ -189,11 +221,11 @@ let check_record_matches (resolved : Resolved.t) =
 ;;
 
 let find_record_name_in_list ~records ~id =
-  match List.filter records ~f:(String.Caseless.equal id) with
+  match List.filter records ~f:(String.Caseless.equal (Id.to_string id)) with
   | [ name ] -> Or_error.return name
-  | [] -> Or_error.error_s [%message "no record matching id" (id : string)]
+  | [] -> Or_error.error_s [%message "no record matching id" (id : Id.t)]
   | matches ->
-    Or_error.error_s [%message "ambiguous id" (id : string) (matches : string list)]
+    Or_error.error_s [%message "ambiguous id" (id : Id.t) (matches : string list)]
 ;;
 
 let find_record_names_in_list ~records ~ids =
@@ -299,16 +331,21 @@ let apply ~home_dir ~ids =
     apply_record resolved)
 ;;
 
-let check_all ~home_dir =
+let check ~home_dir ~ids =
   let%bind () = Rbw_cli.sync () in
   let%bind records = Rbw_cli.search ~folder ~term:"" in
+  let%bind to_check =
+    match ids with
+    | None -> return records
+    | Some ids -> find_record_names_in_list ~records ~ids |> Deferred.return
+  in
   let check_one name : (string * bool) Deferred.Or_error.t =
     let%bind resolved = resolve_record ~home_dir name in
     let%map matched = check_record_matches resolved in
     name, matched
   in
   let%bind.Deferred per_record =
-    Deferred.List.map records ~how:`Sequential ~f:check_one
+    Deferred.List.map to_check ~how:`Sequential ~f:check_one
   in
   let mismatched =
     List.filter_map per_record ~f:(function
@@ -331,25 +368,11 @@ let check_command =
     ~extract_exn:true
     ~summary:"Show the diff between local files and their Bitwarden contents"
     (let%map_open.Command home_dir_or_error = home_dir_param
+     and ids = anon (maybe (Nonempty_list.anons ("ID" %: Id.arg_type)))
      and () = Log.Global.set_level_via_param () in
      fun () ->
        let%bind home_dir = Deferred.return home_dir_or_error in
-       check_all ~home_dir)
-;;
-
-let id_arg_type =
-  Command.Arg_type.create
-    ~complete:(fun _ ~part ->
-      Thread_safe.block_on_async_exn (fun () ->
-        match%bind.Deferred Rbw_cli.is_unlocked () with
-        | false -> Deferred.return []
-        | true ->
-          (match%map.Deferred Rbw_cli.search ~folder ~term:part with
-           | Error _ -> []
-           | Ok candidates ->
-             List.filter candidates ~f:(fun name ->
-               String.Caseless.is_prefix name ~prefix:part))))
-    Fn.id
+       check ~home_dir ~ids)
 ;;
 
 let apply_command =
@@ -357,7 +380,7 @@ let apply_command =
     ~extract_exn:true
     ~summary:"Place secret files from Bitwarden at their configured locations"
     (let%map_open.Command home_dir_or_error = home_dir_param
-     and ids = anon (sequence ("ID" %: id_arg_type))
+     and ids = anon (sequence ("ID" %: Id.arg_type))
      and () = Log.Global.set_level_via_param () in
      fun () ->
        let ids = Nonempty_list.of_list ids in
@@ -369,7 +392,7 @@ let cat_command =
   Command.async_or_error
     ~extract_exn:true
     ~summary:"Print secret file contents from Bitwarden"
-    (let%map_open.Command id = anon ("ID" %: id_arg_type)
+    (let%map_open.Command id = anon ("ID" %: Id.arg_type)
      and () = Log.Global.set_level_via_param () in
      fun () -> cat ~id)
 ;;
@@ -380,7 +403,7 @@ let upload_command =
     ~summary:"Upload a local file's bytes back into its rbw record"
     (let%map_open.Command home_dir_or_error = home_dir_param
      and yes = flag "yes" no_arg ~doc:" skip the confirmation prompt"
-     and id = anon ("ID" %: id_arg_type)
+     and id = anon ("ID" %: Id.arg_type)
      and () = Log.Global.set_level_via_param () in
      fun () ->
        let%bind home_dir = Deferred.return home_dir_or_error in
@@ -398,6 +421,7 @@ let command =
 ;;
 
 module For_testing = struct
+  module Id = Id
   module Resolved = Resolved
 
   let resolve_target = resolve_target

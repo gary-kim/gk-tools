@@ -3,6 +3,12 @@ open! Core
 val command : Command.t
 
 module For_testing : sig
+  module Id : sig
+    type t [@@deriving sexp]
+
+    include Stringable.S with type t := t
+  end
+
   module Resolved : sig
     type t =
       { name : string
