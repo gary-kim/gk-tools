@@ -3,6 +3,45 @@ open! Async
 
 let () = Log.Global.set_output []
 
+let%expect_test "secret source flags compose without resolving" =
+  let module Secret_source = Gk_tools.Secret_source in
+  let param =
+    let%map_open.Command secret =
+      Secret_source.param
+        ~doc:"secret"
+        ~if_nothing_chosen:(Default_to (Command "exit 1"))
+        ()
+    and password =
+      Secret_source.param
+        ~prefix:"sieve-password"
+        ~doc:"upload password"
+        ~if_nothing_chosen:Return_none
+        ()
+    in
+    secret, password
+  in
+  let parse = Command_test_helpers.parse_command_line_or_error param |> unstage in
+  List.iter
+    [ []
+    ; [ "-env"; "SECRET_SOURCE_TEST_PASSWORD"; "-sieve-password"; "a password" ]
+    ; [ "-literal"; "literal secret"; "-sieve-password-cmd"; "exit 2" ]
+    ]
+    ~f:(fun args ->
+      print_s [%sexp (parse args : (Secret_source.t * Secret_source.t option) Or_error.t)]);
+  print_s
+    [%sexp
+      (Command.Arg_type.parse Secret_source.arg_type {|(Command "exit 3")|}
+       : Secret_source.t Or_error.t)];
+  [%expect
+    {|
+    (Ok ((Command "exit 1") ()))
+    (Ok ((Env SECRET_SOURCE_TEST_PASSWORD) ((Literal "a password"))))
+    (Ok ((Literal "literal secret") ((Command "exit 2"))))
+    (Ok (Command "exit 3"))
+    |}];
+  return ()
+;;
+
 let print_ics_parse_error data =
   match Gk_tools.Ics.parse data with
   | Ok ics ->

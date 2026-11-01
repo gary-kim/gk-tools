@@ -5,6 +5,7 @@
   gk-tools.mcp
   core
   core_unix
+  core_unix.command_test_helpers
   async
   cohttp
   cohttp-async

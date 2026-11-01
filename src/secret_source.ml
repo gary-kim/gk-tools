@@ -8,6 +8,33 @@ type t =
   | Command of string
 [@@deriving sexp]
 
+let arg_type = Command.Param.sexp_conv t_of_sexp
+
+let param ?prefix ~doc ~if_nothing_chosen () =
+  let source_flag suffix ~doc ~f =
+    let name =
+      match prefix, suffix with
+      | None, _ -> suffix
+      | Some prefix, "literal" -> prefix
+      | Some prefix, _ -> [%string "%{prefix}-%{suffix}"]
+    in
+    Command.Param.flag
+      name
+      (Command.Flag.optional (Command.Arg_type.map Command.Param.string ~f))
+      ~doc
+  in
+  Command.Param.choose_one
+    [ source_flag "literal" ~doc:[%string "VALUE %{doc}"] ~f:(fun value -> Literal value)
+    ; source_flag
+        "env"
+        ~doc:[%string "NAME %{doc} (environment variable)"]
+        ~f:(fun name -> Env name)
+    ; source_flag "cmd" ~doc:[%string "COMMAND %{doc} (shell command)"] ~f:(fun command ->
+        Command command)
+    ]
+    ~if_nothing_chosen
+;;
+
 let command_queue = lazy (Throttle.Sequencer.create ~continue_on_error:true ())
 
 let run_command command =
