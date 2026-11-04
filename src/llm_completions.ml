@@ -73,6 +73,136 @@ module Tagged_object = struct
   ;;
 end
 
+module Tool = struct
+  module Content = struct
+    module Text = struct
+      module Kind = struct
+        type t = Input_text [@@deriving string ~capitalize:"snake_case"]
+
+        include functor Jsonaf.Jsonafable.Of_stringable
+      end
+
+      type t =
+        { type_ : Kind.t [@key "type"]
+        ; text : Utf8.t
+        }
+      [@@deriving jsonaf_of]
+    end
+
+    module Image = struct
+      module Kind = struct
+        type t = Input_image [@@deriving string ~capitalize:"snake_case"]
+
+        include functor Jsonaf.Jsonafable.Of_stringable
+      end
+
+      type t =
+        { type_ : Kind.t [@key "type"]
+        ; image_url : string
+        }
+      [@@deriving jsonaf_of]
+    end
+
+    module File = struct
+      module Kind = struct
+        type t = Input_file [@@deriving string ~capitalize:"snake_case"]
+
+        include functor Jsonaf.Jsonafable.Of_stringable
+      end
+
+      type t =
+        { type_ : Kind.t [@key "type"]
+        ; filename : string
+        ; file_data : string
+        }
+      [@@deriving jsonaf_of]
+    end
+
+    type t =
+      | Text of Text.t
+      | Image of Image.t
+      | File of File.t
+
+    let jsonaf_of_t t =
+      match t with
+      | Text text -> [%jsonaf_of: Text.t] text
+      | Image image -> [%jsonaf_of: Image.t] image
+      | File file -> [%jsonaf_of: File.t] file
+    ;;
+
+    let text text = Text { type_ = Input_text; text }
+
+    let data_url ~mime_type data =
+      let mime_type = Mcp.Protocol.Mime_type.to_string mime_type in
+      let encoded = Base64.encode_string data in
+      [%string "data:%{mime_type};base64,%{encoded}"]
+    ;;
+
+    let image ~mime_type ~data =
+      Image { type_ = Input_image; image_url = data_url ~mime_type data }
+    ;;
+
+    let file ~filename ~mime_type ~data =
+      File { type_ = Input_file; filename; file_data = data_url ~mime_type data }
+    ;;
+  end
+
+  module Definition = struct
+    module Kind = struct
+      type t = Function [@@deriving string ~capitalize:"snake_case"]
+
+      include functor Jsonaf.Jsonafable.Of_stringable
+    end
+
+    type t =
+      { type_ : Kind.t [@key "type"]
+      ; name : string
+      ; description : string
+      ; parameters : Mcp.Protocol.Schema.Object.t
+      ; strict : bool
+      }
+    [@@deriving jsonaf_of]
+  end
+
+  module Output = struct
+    module Kind = struct
+      type t = Function_call_output [@@deriving string ~capitalize:"snake_case"]
+
+      include functor Jsonaf.Jsonafable.Of_stringable
+    end
+
+    type t =
+      { type_ : Kind.t [@key "type"]
+      ; call_id : string
+      ; output : Content.t list
+      }
+    [@@deriving jsonaf_of]
+  end
+
+  type t =
+    { definition : Definition.t
+    ; call : Jsonaf.t -> Content.t Nonempty_list.t Deferred.Or_error.t
+    }
+
+  let create ~name ~description ~properties ~of_jsonaf ~f =
+    let parameters =
+      Mcp.Protocol.Schema.Object.create
+        ~properties
+        ~required:(Map.keys properties)
+        ~additional_properties:false
+        ()
+    in
+    { definition = { type_ = Function; name; description; parameters; strict = true }
+    ; call =
+        (fun json ->
+          let%bind arguments =
+            Or_error.try_with (fun () -> of_jsonaf json) |> Deferred.return
+          in
+          f arguments)
+    }
+  ;;
+end
+
 module Response = struct
   type t =
     { content : Utf8.t
@@ -153,13 +283,34 @@ module Response = struct
       [@@deriving of_jsonaf] [@@jsonaf.allow_extra_fields]
     end
 
+    module Function_call = struct
+      type t =
+        { call_id : string
+        ; name : string
+        ; arguments : string
+        ; status : Item_status.t option [@default None]
+        }
+      [@@deriving of_jsonaf] [@@jsonaf.allow_extra_fields]
+    end
+
     module Item = struct
       type t =
         | Message of Message.t
         | Reasoning of Reasoning.t
+        | Function_call of Function_call.t
       [@@deriving of_jsonaf ~capitalize:"snake_case"]
 
       let t_of_jsonaf = Tagged_object.of_jsonaf t_of_jsonaf
+    end
+
+    module Output_item = struct
+      type t =
+        { item : Item.t
+        ; original : Jsonaf.t
+        }
+
+      let t_of_jsonaf original = { item = [%of_jsonaf: Item.t] original; original }
+      let jsonaf_of_t t = t.original
     end
 
     module Status = struct
@@ -190,11 +341,19 @@ module Response = struct
 
     type t =
       { status : Status.t
-      ; output : Item.t list
+      ; output : Output_item.t list
       ; error : Failure.t option [@default None]
       ; incomplete_details : Incomplete_details.t option [@default None]
       }
     [@@deriving of_jsonaf] [@@jsonaf.allow_extra_fields]
+  end
+
+  module Parsed = struct
+    type nonrec t =
+      { output : Wire.Output_item.t list
+      ; tool_calls : Wire.Function_call.t list
+      ; response : t
+      }
   end
 
   let message_text (message : Wire.Message.t) =
@@ -219,29 +378,30 @@ module Response = struct
   ;;
 
   let item_text item =
-    let open Or_error.Let_syntax in
     match (item : Wire.Item.t) with
     | Message ({ status = Completed; role = Assistant; _ } as message) ->
-      let%map text = message_text message in
+      let%map.Or_error text = message_text message in
       (match message.phase with
        | Some Commentary -> [], []
        | None | Some Final_answer -> text, [])
     | Reasoning ({ status = None | Some Completed; _ } as reasoning) ->
       Ok ([], reasoning_text reasoning)
-    | Message { status; _ } | Reasoning { status = Some status; _ } ->
+    | Function_call { status = None | Some Completed; _ } -> Ok ([], [])
+    | Message { status; _ }
+    | Reasoning { status = Some status; _ }
+    | Function_call { status = Some status; _ } ->
       Or_error.error_s
         [%message "LLM returned an incomplete output item" (status : Wire.Item_status.t)]
   ;;
 
   let parse body =
-    let open Or_error.Let_syntax in
-    let%bind wire =
+    let%bind.Or_error wire =
       Jsonaf.parse body
       |> Or_error.bind ~f:(fun json ->
         Or_error.try_with (fun () -> Wire.t_of_jsonaf json))
       |> Or_error.tag ~tag:"invalid LLM completion response"
     in
-    let%bind wire =
+    let%bind.Or_error wire =
       match wire.status, wire.error, wire.incomplete_details with
       | Completed, None, None -> Ok wire
       | _ ->
@@ -253,20 +413,55 @@ module Response = struct
               ~incomplete_details:
                 (wire.incomplete_details : Wire.Incomplete_details.t option)]
     in
-    let%bind items = List.map wire.output ~f:item_text |> Or_error.combine_errors in
-    let content = List.concat_map items ~f:fst |> Utf8.concat in
-    let%map () =
+    let items = List.map wire.output ~f:(fun item -> item.Wire.Output_item.item) in
+    let%map.Or_error text = List.map items ~f:item_text |> Or_error.combine_errors in
+    { Parsed.output = wire.output
+    ; tool_calls =
+        List.filter_map items ~f:(fun item ->
+          match (item : Wire.Item.t) with
+          | Function_call call -> Some call
+          | Message _ | Reasoning _ -> None)
+    ; response =
+        { content = List.concat_map text ~f:fst |> Utf8.concat
+        ; reasoning = List.concat_map text ~f:snd
+        }
+    }
+  ;;
+
+  let finish t =
+    let%map.Or_error () =
       Result.ok_if_true
-        (not (String.is_empty (String.strip (Utf8.to_string content))))
+        (not (String.is_empty (String.strip (Utf8.to_string t.content))))
         ~error:(Error.of_string "LLM returned no text")
     in
-    { content; reasoning = List.concat_map items ~f:snd }
+    t
   ;;
 end
 
 module Request = struct
+  module Input = struct
+    type t =
+      | Message of Message.Input.t
+      | Output_item of Response.Wire.Output_item.t
+      | Tool_output of Tool.Output.t
+
+    let jsonaf_of_t t =
+      match t with
+      | Message message -> [%jsonaf_of: Message.Input.t] message
+      | Output_item item -> [%jsonaf_of: Response.Wire.Output_item.t] item
+      | Tool_output output -> [%jsonaf_of: Tool.Output.t] output
+    ;;
+  end
+
+  module Include = struct
+    type t = Reasoning_encrypted_content [@rename "reasoning.encrypted_content"]
+    [@@deriving string]
+
+    include functor Jsonaf.Jsonafable.Of_stringable
+  end
+
   type t =
-    { input : Message.Input.t list
+    { input : Input.t list
     ; instructions : Utf8.t option [@jsonaf.option]
     ; model : string
     ; stream : bool
@@ -275,6 +470,9 @@ module Request = struct
     ; reasoning : Reasoning.t option [@jsonaf.option]
     ; max_output_tokens : int option [@jsonaf.option]
     ; temperature : float option [@jsonaf.option]
+    ; tools : Tool.Definition.t list option [@jsonaf.option]
+    ; include_ : Include.t list option [@key "include"] [@jsonaf.option]
+    ; prompt_cache_key : string
     }
   [@@deriving jsonaf_of]
 end
@@ -344,7 +542,8 @@ let create (settings : Config.Llm_completions_settings.t) =
   }
 ;;
 
-let complete t ?instructions messages =
+let complete t ?instructions ?tools ?(max_tool_rounds = 8) messages =
+  let prompt_cache_key = Uuid_unix.create () |> Uuid.to_string in
   let instructions =
     Option.merge t.system_prompt instructions ~f:(fun system_prompt instructions ->
       Utf8.concat [ system_prompt; Utf8.of_string "\n\n"; instructions ])
@@ -358,26 +557,110 @@ let complete t ?instructions messages =
     Option.value_map t.token ~default:headers ~f:(fun token ->
       Cohttp.Header.add headers "Authorization" [%string "Bearer %{token}"])
   in
-  let body =
-    Request.jsonaf_of_t
-      { input = Nonempty_list.map messages ~f:Message.to_input |> Nonempty_list.to_list
-      ; instructions
-      ; model = t.parameters.model
-      ; stream = false
-      ; store = false
-      ; background = false
-      ; reasoning = t.parameters.reasoning
-      ; max_output_tokens = t.parameters.max_output_tokens
-      ; temperature = t.parameters.temperature
-      }
-    |> Jsonaf.to_string
-  in
-  let result =
+  let request input =
+    let body =
+      [%jsonaf_of: Request.t]
+        { input
+        ; instructions
+        ; model = t.parameters.model
+        ; stream = false
+        ; store = false
+        ; background = false
+        ; reasoning = t.parameters.reasoning
+        ; max_output_tokens = t.parameters.max_output_tokens
+        ; temperature = t.parameters.temperature
+        ; tools =
+            Option.map tools ~f:(fun tools ->
+              Nonempty_list.map tools ~f:(fun tool -> tool.Tool.definition)
+              |> Nonempty_list.to_list)
+        ; include_ =
+            Option.map tools ~f:(fun (_ : Tool.t Nonempty_list.t) ->
+              [ Request.Include.Reasoning_encrypted_content ])
+        ; prompt_cache_key
+        }
+      |> Jsonaf.to_string
+    in
     let%bind body =
       Http_client.request ~meth:`POST ~url:t.url ~headers ~body ~timeout:t.timeout
       |> Deferred.Or_error.tag ~tag:"LLM completion request"
     in
     Response.parse body |> Deferred.return
+  in
+  let call_tool (call : Response.Wire.Function_call.t) =
+    [%log.debug
+      "LLM tool call"
+        (prompt_cache_key : string)
+        ~name:(call.name : string)
+        ~arguments:(call.arguments : string)];
+    let%map.Deferred result =
+      let%bind tool =
+        Option.bind
+          tools
+          ~f:
+            (Nonempty_list.find ~f:(fun tool ->
+               String.equal tool.Tool.definition.name call.name))
+        |> Or_error.of_option_lazy_sexp
+             ~error:[%lazy_message "unknown LLM tool" ~name:(call.name : string)]
+        |> Deferred.return
+      in
+      let%bind arguments = Jsonaf.parse call.arguments |> Deferred.return in
+      Deferred.Or_error.try_with_join ~extract_exn:true (fun () -> tool.call arguments)
+    in
+    let output =
+      match result with
+      | Ok content -> Nonempty_list.to_list content
+      | Error error ->
+        [%log.info
+          "LLM tool call failed"
+            (prompt_cache_key : string)
+            ~name:(call.name : string)
+            (error : Error.t)];
+        let message = Error.to_string_hum error |> redact in
+        [ Tool.Content.text (String.Utf8.sanitize [%string "Tool error: %{message}"]) ]
+    in
+    Request.Input.Tool_output
+      { type_ = Function_call_output; call_id = call.call_id; output }
+  in
+  let result =
+    let%bind () =
+      Option.bind tools ~f:(fun tools ->
+        Nonempty_list.map tools ~f:(fun tool -> tool.Tool.definition.name)
+        |> Nonempty_list.to_list
+        |> List.find_a_dup ~compare:[%compare: string])
+      |> Option.value_map ~default:(return ()) ~f:(fun name ->
+        Deferred.Or_error.error_s [%message "duplicate LLM tool" (name : string)])
+    in
+    let input =
+      Nonempty_list.map messages ~f:(fun message ->
+        Request.Input.Message (Message.to_input message))
+      |> Nonempty_list.to_list
+    in
+    Deferred.Or_error.repeat_until_finished
+      (input, 0, [])
+      (fun (input, rounds, reasoning) ->
+         let%bind parsed = request input in
+         let reasoning = List.rev_append parsed.response.reasoning reasoning in
+         match parsed.tool_calls with
+         | [] ->
+           Response.finish { parsed.response with reasoning = List.rev reasoning }
+           |> Or_error.map ~f:(fun response -> `Finished response)
+           |> Deferred.return
+         | calls ->
+           let%bind () =
+             Result.ok_if_true
+               (rounds < max_tool_rounds)
+               ~error:
+                 (Error.create_s
+                    [%message "LLM tool round limit exceeded" (max_tool_rounds : int)])
+             |> Deferred.return
+           in
+           let%map.Deferred output =
+             Deferred.List.map calls ~how:`Sequential ~f:call_tool
+           in
+           let history =
+             List.map parsed.output ~f:(fun item -> Request.Input.Output_item item)
+           in
+           Ok (`Repeat (input @ history @ output, rounds + 1, reasoning)))
   in
   Deferred.Result.map_error result ~f:(fun error ->
     let text = Error.to_string_hum error in

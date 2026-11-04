@@ -37,7 +37,7 @@ let build_info =
 let version =
   let git_hash = Bin_build_info.git_hash in
   let version = Bin_build_info.version in
-  [%string "(https://git.sr.ht/~gary-kim/gk-tools/commit/%{git_hash}) %{version}"]
+  [%string "(https://github.com/gary-kim/gk-tools/commit/%{git_hash}) %{version}"]
 ;;
 
 let () =

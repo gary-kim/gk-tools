@@ -24,6 +24,7 @@
   ppx_jane
   async
   async_ssl
+  base64
   cohttp
   cohttp-async
   re
