@@ -41,6 +41,7 @@ module Schema : sig
 
   val create : ?description:string -> ?enum:Jsonaf.t list -> Kind.t -> t
   val array : ?description:string -> t -> t
+  val any_of : ?description:string -> t Nonempty_list.t -> t
 
   module Object : sig
     type schema := t

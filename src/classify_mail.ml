@@ -298,7 +298,6 @@ module Maildir = struct
   ;;
 
   let message_files ~dir message_id =
-    let escaped_id = String.substr_replace_all message_id ~pattern:"\"" ~with_:"\"\"" in
     let%bind output =
       Logged_process.run
         ~prog:"notmuch"
@@ -306,7 +305,7 @@ module Maildir = struct
           [ "search"
           ; "--output=files"
           ; "--exclude=false"
-          ; [%string {|id:"%{escaped_id}"|}]
+          ; Notmuch_query.of_message_id message_id
           ]
         ()
     in
@@ -391,9 +390,14 @@ Set "reason" to a short, one-sentence explanation of the classification.|}]
 ;;
 
 let classify ~llm ~(settings : Config.Classify_mail_settings.t) (message : Message.t) =
+  let tools =
+    Option.map message.message_id ~f:(fun message_id ->
+      Nonempty_list.singleton (Notmuch_attachment.tool ~message_id))
+  in
   let%bind response =
     Llm_completions.complete
       llm
+      ?tools
       ~instructions:(system_prompt settings)
       [ { role = User; content = message.content } ]
   in

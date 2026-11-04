@@ -1,6 +1,6 @@
 open! Core
 open! Async
-open Deferred.Let_syntax
+open Jsonaf.Export
 
 let with_directory ~f =
   Filesystem_async.with_temp_dir ~in_dir:(File_path.of_string ".") (fun dir ->
@@ -537,6 +537,138 @@ let%expect_test "CalDAV secret sources and CLI credential overrides" =
     ((success true) (credentials ((user cli-secret))))
     ((success true) (credentials ((user cli-secret))))
     ((success true) (credentials ((user headless-secret))))
+    |}];
+  return ()
+;;
+
+let%expect_test "classification fetches attachment content through notmuch tools" =
+  let%bind () =
+    with_directory ~f:(fun dir ->
+      let bin_dir = dir ^/ "bin" in
+      let inherited_path = Sys.getenv "PATH" in
+      let path = String.concat ~sep:":" (bin_dir :: Option.to_list inherited_path) in
+      let env = [ "PATH", path; "FIXTURE", dir ] in
+      let%bind () = Unix.mkdir bin_dir in
+      let%bind () =
+        Writer.save
+          ~perm:0o700
+          (dir ^/ "bin/notmuch")
+          ~contents:
+            {|#!/usr/bin/env bash
+set -eu
+test "${!#}" = 'id:"invoice@example.com"'
+printf '%s\n' "$*" >> "$FIXTURE/calls"
+case "$*" in
+  'show --format=json --format-version=5 --part=1 --include-html --decrypt=false '* ) cat "$FIXTURE/parts.json" ;;
+  'show --format=raw --part=3 --decrypt=false '* ) printf 'PDF\000data' ;;
+  'show --format=raw --part=4 --decrypt=false '* ) printf 'PNG\000data' ;;
+  * ) exit 1 ;;
+esac
+|}
+      and () =
+        Writer.save
+          (dir ^/ "parts.json")
+          ~contents:
+            {|{"id":1,"content-type":"multipart/mixed","content":[
+          {"id":2,"content-type":"text/plain","content":"Invoice attached."},
+          {"id":3,"filename":"invoice.pdf","content-type":"application/pdf","content-disposition":"attachment"},
+          {"id":4,"filename":"invoice.png","content-type":"image/png","content-disposition":"attachment"},
+          {"id":5,"content-type":"message/rfc822","content":[{"headers":{},"body":[
+            {"id":6,"filename":"notes.txt","content-type":"text/plain","content":"Invoice notes."}
+          ]}]}
+        ]}|}
+      in
+      let calls ~round parts =
+        let output =
+          List.mapi parts ~f:(fun index part_id ->
+            let arguments =
+              [%jsonaf_of: Llm_test_wire.Attachment_arguments.t] { part_id }
+              |> Jsonaf.to_string
+            in
+            [%jsonaf_of: Llm_test_wire.Function_call.t]
+              { type_ = "function_call"
+              ; call_id = [%string "call_%{round#Int}_%{index#Int}"]
+              ; name = "get_email_attachment"
+              ; arguments
+              })
+        in
+        [%jsonaf_of: Llm_test_wire.Response.t] { status = "completed"; output }
+        |> Jsonaf.to_string
+      in
+      Llm_test_wire.with_responses
+        [ (fun request ->
+            List.map request.tools ~f:(fun tool -> tool.name)
+            |> [%sexp_of: string list]
+            |> print_s;
+            calls ~round:1 [ None ])
+        ; (fun request ->
+            let result =
+              List.last_exn request.input |> [%of_jsonaf: Llm_test_wire.Tool_output.t]
+            in
+            List.filter_map result.output ~f:(fun content -> content.text)
+            |> List.iter ~f:print_endline;
+            calls ~round:2 [ Some 3; Some 4; Some 6; Some 2 ])
+        ; (fun request ->
+            List.drop request.input (List.length request.input - 4)
+            |> List.map ~f:[%of_jsonaf: Llm_test_wire.Tool_output.t]
+            |> List.iter ~f:(fun item ->
+              [%jsonaf_of: Llm_test_wire.Content.t list] item.output
+              |> Jsonaf.to_string
+              |> print_endline);
+            response_json (Answer.Folder "Receipts"))
+        ]
+        ~f:(fun port ->
+          let llm =
+            Gk_tools.Config.Llm_completions_settings.t_of_sexp
+              (Sexp.of_string
+                 [%string
+                   {|((url http://127.0.0.1:%{port#Int}/v1/responses) (model mail-model))|}])
+          in
+          let classification =
+            Gk_tools.Config.Classify_mail_settings.t_of_sexp
+              (Sexp.of_string
+                 {|((destinations (((folder Receipts) (description Invoices)))))|})
+          in
+          let%bind () =
+            save_config
+              dir
+              [ "llm_completions", Gk_tools.Config.Llm_completions_settings.sexp_of_t llm
+              ; ( "classify_mail"
+                , Gk_tools.Config.Classify_mail_settings.sexp_of_t classification )
+              ]
+          in
+          let%bind output =
+            run_gkt
+              ~dir
+              ~env
+              ~stdin:
+                "Subject: invoice\n\
+                 Message-ID: <invoice@example.com>\n\n\
+                 Invoice attached.\n"
+              [ "misc"
+              ; "classify-mail"
+              ; "-folder"
+              ; "INBOX"
+              ; "-file"
+              ; dir ^/ "INBOX/cur/one"
+              ; "-dry-run"
+              ]
+          in
+          ignore (success_exn output : string);
+          let%map calls = Reader.file_contents (dir ^/ "calls") in
+          print_string calls))
+  in
+  [%expect
+    {|
+    (get_email_attachment)
+    [{"part_id":3,"filename":"invoice.pdf","content_type":"application/pdf"},{"part_id":4,"filename":"invoice.png","content_type":"image/png"},{"part_id":6,"filename":"notes.txt","content_type":"text/plain"}]
+    [{"type":"input_file","filename":"invoice.pdf","file_data":"data:application/pdf;base64,UERGAGRhdGE="}]
+    [{"type":"input_image","image_url":"data:image/png;base64,UE5HAGRhdGE="}]
+    [{"type":"input_text","text":"Invoice notes."}]
+    [{"type":"input_text","text":"Tool error: (\"no attachment with this part ID\" (part_id 2))"}]
+    show --format=json --format-version=5 --part=1 --include-html --decrypt=false id:"invoice@example.com"
+    show --format=raw --part=3 --decrypt=false id:"invoice@example.com"
+    show --format=raw --part=4 --decrypt=false id:"invoice@example.com"
     |}];
   return ()
 ;;

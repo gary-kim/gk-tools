@@ -88,6 +88,19 @@ module Schema = struct
 
   let array ?description items = { (create ?description Array) with items = Some items }
 
+  let any_of ?description schemas =
+    { kind = None
+    ; description
+    ; properties = None
+    ; required = None
+    ; additional_properties = None
+    ; items = None
+    ; enum = None
+    ; any_of = Some (Nonempty_list.to_list schemas)
+    ; ref_ = None
+    }
+  ;;
+
   module Object = struct
     type nonrec t = t [@@deriving sexp_of, jsonaf_of]
 

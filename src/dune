@@ -6,13 +6,16 @@
   core_unix.bigstring_unix
   core_unix.linux_ext
   core_unix.time_ns_unix
+  core_unix.uuid
   async
   async_interactive
   async_ssl
+  base64
   cohttp
   cohttp-async
   file_path
   filesystem.core
+  gk-tools.mcp
   email_message.kernel
   jsonaf
   posixat
