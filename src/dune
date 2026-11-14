@@ -15,14 +15,12 @@
   filesystem.core
   email_message.kernel
   jsonaf
+  posixat
   re
   uri
   sexp_macro
   xdg
   patdiff
   patdiff.kernel)
- (foreign_stubs
-  (language c)
-  (names rename_noreplace_stubs))
  (preprocess
   (pps ppx_jane ppx_jsonaf_conv)))

@@ -319,8 +319,6 @@ module Maildir = struct
       Option.exists (folder_dir file) ~f:(File_path.Absolute.equal dir))
   ;;
 
-  external rename_noreplace : src:string -> dst:string -> unit = "gkt_rename_noreplace"
-
   let move ~destination_dir file =
     Deferred.Or_error.try_with ~extract_exn:true (fun () ->
       let name =
@@ -336,7 +334,14 @@ module Maildir = struct
       in
       let src = File_path.Absolute.to_string file
       and dst = File_path.Absolute.to_string destination in
-      In_thread.syscall_exn ~name:"renameat2" (fun () -> rename_noreplace ~src ~dst))
+      In_thread.syscall_exn ~name:"renameat2" (fun () ->
+        let dir = Posixat.at_fdcwd () in
+        Posixat.renameat2
+          ~olddir:dir
+          ~oldpath:src
+          ~newdir:dir
+          ~newpath:dst
+          ~flags:[ RENAME_NOREPLACE ]))
   ;;
 end
 
