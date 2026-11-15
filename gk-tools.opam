@@ -6,7 +6,7 @@ description:
 maintainer: ["Gary Kim <gary@garykim.dev>"]
 authors: ["Gary Kim <gary@garykim.dev>"]
 depends: [
-  "ocaml-variants" {= "5.2.0+ox"}
+  "ocaml-variants" {= "5.4.0+ox"}
   "dune" {>= "3.15"}
   "core"
   "core_unix"

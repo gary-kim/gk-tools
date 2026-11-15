@@ -30,7 +30,7 @@ tasks:
 
       opam init --yes --bare
       # The overlay fixes packages currently broken in the oxcaml opam repository.
-      opam switch create 5.2.0+ox --repos ox-overlay=git+https://git.sr.ht/~gary-kim/oxcaml-opam-overlay,ox=git+https://github.com/oxcaml/opam-repository.git#dev,default --yes
+      opam switch create 5.4.0+ox --repos ox-overlay=git+https://git.sr.ht/~gary-kim/oxcaml-opam-overlay,ox=git+https://github.com/oxcaml/opam-repository.git#dev,default --yes
       eval $(opam env)
       cd gk-tools
       opam install . --deps-only --yes --assume-depexts
