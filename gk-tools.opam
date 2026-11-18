@@ -6,7 +6,7 @@ description:
 maintainer: ["Gary Kim <gary@garykim.dev>"]
 authors: ["Gary Kim <gary@garykim.dev>"]
 depends: [
-  "ocaml-variants" {= "5.4.0+ox"}
+  "oxcaml-compiler" {>= "5.4.0-ox1"}
   "dune" {>= "3.15"}
   "core"
   "core_unix"

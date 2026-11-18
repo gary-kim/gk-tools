@@ -16,8 +16,8 @@
  (description
   "General purpose tools binary for system administration and automation")
  (depends
-  (ocaml-variants
-   (= 5.4.0+ox))
+  (oxcaml-compiler
+   (>= 5.4.0-ox1))
   dune
   core
   core_unix
