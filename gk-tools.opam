@@ -9,6 +9,7 @@ depends: [
   "oxcaml-compiler" {>= "5.4.0-ox1"}
   "dune" {>= "3.15"}
   "core"
+  "core_kernel"
   "core_unix"
   "ppx_jane"
   "async"

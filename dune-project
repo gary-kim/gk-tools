@@ -20,6 +20,7 @@
    (>= 5.4.0-ox1))
   dune
   core
+  core_kernel
   core_unix
   ppx_jane
   async

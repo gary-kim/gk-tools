@@ -8,5 +8,6 @@ let command =
       , Command.group
           ~summary:"Claude-related helper commands"
           [ "statusline", Claude_statusline.command ] )
+    ; "framework-keyboard-remap", Framework_keyboard.command
     ]
 ;;

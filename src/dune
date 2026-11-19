@@ -7,6 +7,7 @@
   core_unix.linux_ext
   core_unix.time_ns_unix
   core_unix.uuid
+  core_kernel.binary_packing
   async
   async_interactive
   async_ssl
@@ -25,5 +26,8 @@
   xdg
   patdiff
   patdiff.kernel)
+ (foreign_stubs
+  (language c)
+  (names framework_keyboard_stubs))
  (preprocess
   (pps ppx_jane ppx_jsonaf_conv)))
